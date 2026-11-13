@@ -139,9 +139,26 @@ class Prefs(context: Context) {
         writeTasks(trim(current))
     }
 
-    fun noteWaiting(agentId: String, payload: AlarmPayload, escalateAt: Long, ringing: Boolean) {
+    fun sinceQuery(): String = lastId.ifBlank { "12h" }
+
+    fun hasSeen(messageId: String): Boolean = messageId.isNotEmpty() && seen().contains(messageId)
+
+    /** Remember a ntfy message so a reconnect cannot deliver it again. */
+    fun markSeen(messageId: String, timeSec: Long) {
+        if (messageId.isEmpty()) return
+        val ids = seen().toMutableList()
+        if (messageId !in ids) ids.add(messageId)
+        while (ids.size > 500) ids.removeAt(0)
+        val edit = sp.edit().putString(KEY_SEEN, JSONArray(ids).toString())
+        if (timeSec > sp.getLong(KEY_LAST_TIME, 0L)) edit.putLong(KEY_LAST_TIME, timeSec)
+        edit.putString(KEY_LAST, messageId).commit()
+    }
+
+    fun noteWaiting(agentId: String, payload: AlarmPayload, escalateAt: Long, ringing: Boolean): Boolean {
+        if (isAnswered(payload.id)) return false
         val current = tasks().toMutableList()
         val existing = current.indexOfFirst { it.id == payload.id }
+        if (existing >= 0 && current[existing].state == STATE_DONE) return false
         val registered = if (existing >= 0) current[existing].registeredAt else System.currentTimeMillis()
         val item = TaskItem(
             id = payload.id,
@@ -159,6 +176,7 @@ class Prefs(context: Context) {
         )
         if (existing >= 0) current[existing] = item else current.add(item)
         writeTasks(trim(current))
+        return true
     }
 
     fun isAnswered(id: String): Boolean = answered().contains(id)
@@ -166,7 +184,7 @@ class Prefs(context: Context) {
     fun markDone(id: String) {
         val ids = answered().toMutableList()
         if (id !in ids) ids.add(id)
-        while (ids.size > 200) ids.removeAt(0)
+        while (ids.size > 500) ids.removeAt(0)
         val next = tasks().map { task ->
             if (task.id != id) task
             else task.copy(state = STATE_DONE, ringing = false, escalateAt = 0)
@@ -234,8 +252,12 @@ class Prefs(context: Context) {
         }
     }
 
-    private fun answered(): List<String> {
-        val raw = sp.getString(KEY_ANSWERED, "[]") ?: "[]"
+    private fun seen(): List<String> = stringList(KEY_SEEN)
+
+    private fun answered(): List<String> = stringList(KEY_ANSWERED)
+
+    private fun stringList(key: String): List<String> {
+        val raw = sp.getString(key, "[]") ?: "[]"
         return try {
             val array = JSONArray(raw)
             buildList {
@@ -296,6 +318,8 @@ class Prefs(context: Context) {
         private const val KEY_PENDING = "pending"
         private const val KEY_OPEN = "open"
         private const val KEY_ANSWERED = "answered"
+        private const val KEY_SEEN = "seen_msgs"
+        private const val KEY_LAST_TIME = "last_msg_time"
         private const val KEY_AGENTS = "agents"
         private const val KEY_TASKS = "tasks"
         private const val KEY_MIGRATED = "migrated_agents"

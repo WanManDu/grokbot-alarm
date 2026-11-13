@@ -148,11 +148,13 @@ private fun AlarmScreen(payload: AlarmPayload) {
         }
         sending = true
         failed = false
-        val server = Prefs(context).server
+        val app = context.applicationContext
+        val alarmId = payload.id
+        val server = Prefs(app).server
         val body = JSONObject()
             .put("v", 1)
             .put("type", "answer")
-            .put("id", payload.id)
+            .put("id", alarmId)
             .put("choice", choice)
             .put("instruction", text)
             .toString()
@@ -160,6 +162,9 @@ private fun AlarmScreen(payload: AlarmPayload) {
             val ok = runCatching {
                 Ntfy.publish(server, payload.replyTopic, body, 4)
             }.isSuccess
+            // Mark handled before touching the activity. A reconnect or a
+            // Samsung full-screen re-fire must not ring this id again.
+            if (ok && !payload.test) ListenService.markAnswered(app, alarmId)
             Handler(Looper.getMainLooper()).post {
                 val activity = context as? Activity
                 if (activity == null || activity.isDestroyed) return@post
@@ -168,7 +173,6 @@ private fun AlarmScreen(payload: AlarmPayload) {
                     failed = true
                     return@post
                 }
-                ListenService.signal(context, ListenService.ACTION_ANSWERED, payload.id)
                 activity.finish()
             }
         }.start()

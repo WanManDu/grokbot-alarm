@@ -128,7 +128,9 @@ class ListenService : Service() {
             return
         }
         val topics = agents.joinToString(",") { inboxTopic(it.secret) }
-        val since = URLEncoder.encode(prefs.lastId.ifBlank { "12h" }, "UTF-8")
+        // Message id is an exclusive cursor. Seen ids catch a server that still
+        // replays that message (same timestamp) after a reconnect.
+        val since = URLEncoder.encode(prefs.sinceQuery(), "UTF-8")
         val url = URL(server.trimEnd('/') + "/" + topics + "/json?since=" + since)
         val conn = url.openConnection() as HttpURLConnection
         conn.connectTimeout = 15_000
@@ -163,13 +165,15 @@ class ListenService : Service() {
         val id = obj.optString("id")
         val topic = obj.optString("topic")
         val body = obj.optString("message")
+        val time = obj.optLong("time")
+        if (id.isNotEmpty() && prefs.hasSeen(id)) return
         if (body.isEmpty()) {
-            if (id.isNotEmpty()) prefs.lastId = id
+            if (id.isNotEmpty()) prefs.markSeen(id, time)
             return
         }
         main.post {
-            dispatch(topic, body)
-            if (id.isNotEmpty()) prefs.lastId = id
+            if (!prefs.hasSeen(id)) dispatch(topic, body)
+            if (id.isNotEmpty()) prefs.markSeen(id, time)
         }
     }
 
@@ -193,7 +197,7 @@ class ListenService : Service() {
             return
         }
         val at = System.currentTimeMillis() + incoming.escalateAfterSec * 1000L
-        prefs.noteWaiting(agent.id, payload, escalateAt = at, ringing = false)
+        if (!prefs.noteWaiting(agent.id, payload, escalateAt = at, ringing = false)) return
         notifyNeeds(agent, payload)
         schedule(payload.id, at)
         ListenState.reload(prefs)
@@ -203,7 +207,7 @@ class ListenService : Service() {
         if (prefs.isAnswered(payload.id)) return
         cancelEscalation(payload.id)
         cancelNeeds(payload.id)
-        prefs.noteWaiting(agent.id, payload, escalateAt = 0, ringing = true)
+        if (!prefs.noteWaiting(agent.id, payload, escalateAt = 0, ringing = true)) return
         handleAlarm(payload)
         ListenState.reload(prefs)
     }
@@ -229,7 +233,7 @@ class ListenService : Service() {
         val name = prefs.agent(task.agentId)?.name.orEmpty()
         val payload = task.toPayload(name)
         cancelNeeds(id)
-        prefs.noteWaiting(task.agentId, payload, escalateAt = 0, ringing = true)
+        if (!prefs.noteWaiting(task.agentId, payload, escalateAt = 0, ringing = true)) return
         handleAlarm(payload)
         ListenState.reload(prefs)
     }
@@ -286,6 +290,11 @@ class ListenService : Service() {
 
     private fun showActive() {
         val payload = active ?: return
+        if (prefs.isAnswered(payload.id)) {
+            active = null
+            getSystemService(NotificationManager::class.java).cancel(ALARM_ID)
+            return
+        }
         Ringer.start(this, payload.id)
         getSystemService(NotificationManager::class.java).notify(ALARM_ID, alarmNotification(payload))
         val launch = Intent(this, AlarmActivity::class.java).apply {
@@ -399,6 +408,17 @@ class ListenService : Service() {
                 Log.w(TAG, "signal $action", e)
                 if (action == ACTION_ANSWERED) Prefs(context).markDone(id)
             }
+        }
+
+        /** Persist the answer first, then stop sound and notifications. Safe if the activity is already gone. */
+        fun markAnswered(context: Context, id: String) {
+            val app = context.applicationContext
+            Prefs(app).markDone(id)
+            Ringer.stop(id)
+            val nm = app.getSystemService(NotificationManager::class.java)
+            nm.cancel(ALARM_ID)
+            nm.cancel(4000 + abs(id.hashCode() % 20000))
+            signal(app, ACTION_ANSWERED, id)
         }
 
         fun createChannels(context: Context) {
