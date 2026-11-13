@@ -15,15 +15,21 @@ The phone rings until they answer one real decision about the task. The alarm th
 
 The phone app and this machine share one secret. Config lives in `~/.config/grokbot-alarm/config.json` (or `$GROKBOT_ALARM_HOME`).
 
-If that file is missing, stop and tell the user to open the Alarm app, copy the secret (or scan the QR and read the `secret` parameter), then run:
+Pairing is a sentence the user pastes from the phone. The phone's Copy button puts exactly one line on the clipboard:
 
-```bash
-python3 cli/grokbot_alarm.py init --secret PASTED_SECRET
+```text
+Set up grokbot-alarm with secret SECRET on server SERVER
 ```
 
-Run the CLI from the `grokbot-alarm` repo, or with an absolute path to `cli/grokbot_alarm.py`. `python3` and the standard library are enough. Do not invent a secret that is not on the phone.
+When you see that line, in that message or inside a longer one, run init immediately. Do it even if a config file already exists. Do not ask them to retype the secret, and do not invent one.
 
-Optional: `--server https://ntfy.example` if they are not using the default `https://ntfy.sh`.
+```bash
+python3 cli/grokbot_alarm.py init --secret SECRET --server SERVER
+```
+
+`SECRET` is the single token after `secret`. `SERVER` is the URL after `server` (usually `https://ntfy.sh`). Quote both. Run the CLI from the `grokbot-alarm` repo, or with an absolute path to `cli/grokbot_alarm.py`. `python3` and the standard library are enough.
+
+If the file is missing and they have not pasted that line, tell them to open Alarm on the phone, tap Copy, and paste the line here. Then stop.
 
 ## When the user asks to be woken
 

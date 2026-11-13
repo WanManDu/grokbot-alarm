@@ -22,7 +22,8 @@
     <string name="next_hint">Anything. Typos welcome.</string>
     <string name="your_move">Alarm\'s off. Your move.</string>
     <string name="didnt_land">Nope. Tap again.</string>
-    <string name="copied">Copied.</string>
+    <string name="copied">Copied. Paste it to the bot.</string>
+    <string name="paste_hint">Paste that line in the bot chat.</string>
     <string name="saved">Saved.</string>
     <string name="secret_short">Secret\'s too short.</string>
     <string name="bad_url">That URL won\'t fly.</string>

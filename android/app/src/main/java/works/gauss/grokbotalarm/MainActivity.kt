@@ -4,13 +4,11 @@ import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
-import android.graphics.Bitmap
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -48,8 +46,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -58,10 +54,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.google.zxing.BarcodeFormat
-import com.google.zxing.EncodeHintType
-import com.google.zxing.qrcode.QRCodeWriter
-import java.net.URLEncoder
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
@@ -157,7 +149,7 @@ private fun SetupScreen(tick: Int) {
             .systemBarsPadding()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 24.dp, vertical = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             val status = stringResource(if (connected) R.string.ears_on else R.string.not_listening)
@@ -208,16 +200,6 @@ private fun SetupScreen(tick: Int) {
             }
         }
 
-        if (note.isNotEmpty()) {
-            Text(
-                note,
-                color = AlarmPalette.White,
-                fontFamily = AlarmFont,
-                fontWeight = FontWeight.Bold,
-                fontSize = 16.sp,
-            )
-        }
-
         OutlinedTextField(
             value = secret,
             onValueChange = { secret = it.filterNot { ch -> ch.isWhitespace() } },
@@ -231,36 +213,6 @@ private fun SetupScreen(tick: Int) {
             label = { Text(stringResource(R.string.secret), fontFamily = AlarmFont) },
             colors = fieldColors(),
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            WhiteButton(stringResource(R.string.copy), Modifier.weight(1f)) {
-                if (save()) {
-                    val clip = context.getSystemService(ClipboardManager::class.java)
-                    clip.setPrimaryClip(ClipData.newPlainText("secret", prefs.secret))
-                    note = context.getString(R.string.copied)
-                }
-            }
-            WhiteButton(stringResource(R.string.save), Modifier.weight(1f)) {
-                if (save()) note = context.getString(R.string.saved)
-            }
-        }
-
-        val qrText = if (validSecret(secret.trim()) && validServer(server.trim())) {
-            pairingUri(server.trim().trimEnd('/'), secret.trim())
-        } else {
-            null
-        }
-        if (qrText != null) {
-            val image = remember(qrText) { qrBitmap(qrText) }
-            Image(
-                bitmap = image,
-                contentDescription = stringResource(R.string.secret),
-                modifier = Modifier
-                    .size(220.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .align(Alignment.CenterHorizontally),
-            )
-        }
-
         OutlinedTextField(
             value = server,
             onValueChange = { server = it },
@@ -274,6 +226,34 @@ private fun SetupScreen(tick: Int) {
             label = { Text(stringResource(R.string.server), fontFamily = AlarmFont) },
             colors = fieldColors(),
         )
+        WhiteButton(stringResource(R.string.copy), Modifier.fillMaxWidth()) {
+            if (save()) {
+                val line = setupLine(prefs.secret, prefs.server)
+                val clip = context.getSystemService(ClipboardManager::class.java)
+                clip.setPrimaryClip(ClipData.newPlainText("grokbot-alarm", line))
+                note = context.getString(R.string.copied)
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (note.isNotEmpty()) note else stringResource(R.string.paste_hint),
+                modifier = Modifier.weight(1f),
+                color = if (note.isNotEmpty()) AlarmPalette.White else AlarmPalette.Mute,
+                fontFamily = AlarmFont,
+                fontWeight = if (note.isNotEmpty()) FontWeight.Bold else FontWeight.Normal,
+                fontSize = 15.sp,
+            )
+            Text(
+                stringResource(R.string.save),
+                modifier = Modifier.clickable {
+                    if (save()) note = context.getString(R.string.saved)
+                },
+                color = AlarmPalette.White,
+                fontFamily = AlarmFont,
+                fontWeight = FontWeight.Bold,
+                fontSize = 16.sp,
+            )
+        }
 
         Gate(stringResource(R.string.alerts), stringResource(R.string.alerts_hint), notifOk) {
             if (!notifOk && context is MainActivity) context.askNotifications()
@@ -381,25 +361,6 @@ private fun fieldColors() = OutlinedTextFieldDefaults.colors(
     unfocusedContainerColor = AlarmPalette.Black,
 )
 
-private fun pairingUri(server: String, secret: String): String {
-    val encoded = URLEncoder.encode(server, "UTF-8")
-    return "gba://pair?v=1&server=$encoded&secret=$secret"
-}
-
-private fun qrBitmap(text: String): androidx.compose.ui.graphics.ImageBitmap {
-    val size = 512
-    val matrix = QRCodeWriter().encode(
-        text,
-        BarcodeFormat.QR_CODE,
-        size,
-        size,
-        mapOf(EncodeHintType.MARGIN to 1),
-    )
-    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.RGB_565)
-    for (x in 0 until size) {
-        for (y in 0 until size) {
-            bitmap.setPixel(x, y, if (matrix.get(x, y)) 0xFF000000.toInt() else 0xFFFFFFFF.toInt())
-        }
-    }
-    return bitmap.asImageBitmap()
+private fun setupLine(secret: String, server: String): String {
+    return "Set up grokbot-alarm with secret $secret on server $server"
 }

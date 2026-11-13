@@ -58,13 +58,13 @@ No Android Studio. The debug APK is a workflow artifact named **grokbot-alarm-de
 1. Download `grokbot-alarm-debug.apk` from the artifact (or from the Release, once one is tagged).
 2. On the phone, open the APK and allow install from the browser or files app.
 3. Open **Alarm**.
-4. Grant the four gates. Each row opens the system page; a check means it is granted.
+4. Grant the four gates. Each row opens the system page. **On** means granted, **Needed** means it is not.
    - **Alerts** — notifications, including the ongoing listener.
    - **Screen** — full-screen intents, so the alarm can appear over the lock screen with the screen off (Android 14+).
    - **Battery** — ignore battery optimizations, so the listener is not frozen while the phone sleeps.
    - **DND** — notification policy access. While the alarm is ringing the app switches interruption filter to all, which is as far as stock Android lets a normal app play through Do Not Disturb. The alarm stream (`USAGE_ALARM`) already plays when the ringer is silent.
 5. The round dot at the top turns green when the listener is connected. An ongoing notification titled Alarm stays in the shade. That is expected.
-6. Copy the secret (copy button) or scan the QR. The QR text is `gba://pair?v=1&server=...&secret=...`. You can also paste a secret from `init` into the Secret field and tap the check button. The check button saves the server URL too.
+6. Tap **Copy**. The clipboard gets one line: `Set up grokbot-alarm with secret <secret> on server <server>`. Paste that into the bot chat. The bot runs `init` with those two values. **Save** writes the same fields without copying. You can also paste a secret into **Secret** and a URL into **Server**, then Save.
 
 **Test** plays a local alarm with no network. The question is `2 + 2`. Tap `4` (the sound stops) then `OK`. Nothing is sent.
 
@@ -76,14 +76,14 @@ minSdk 26, targetSdk 37. A force-stop in system settings kills the listener unti
 
 ### Self-host
 
-Run ntfy, put its base URL in the **Server** field, tap the check button, and pass the same URL to `init --server`. `http://` is allowed for a LAN server. Topics stay open; the secret is the only access control. Anyone who has the secret can ring the phone and read answers.
+Run ntfy, put its base URL in **Server**, tap **Save**, then **Copy** and paste the line into the bot chat. `http://` is allowed for a LAN server. Topics stay open; the secret is the only access control. Anyone who has the secret can ring the phone and read answers.
 
 ## Skill and CLI install
 
-On the bot machine, from a clone of this repo:
+On the bot machine, from a clone of this repo, either paste the phone's Copy line into the bot (it should run the command below) or run it yourself:
 
 ```bash
-python3 cli/grokbot_alarm.py init --secret PASTED_SECRET
+python3 cli/grokbot_alarm.py init --secret SECRET --server https://ntfy.sh
 ```
 
 That writes `~/.config/grokbot-alarm/config.json` (mode 0600). `GROKBOT_ALARM_HOME` overrides the directory. `GROKBOT_ALARM_SERVER` and `GROKBOT_ALARM_SECRET` override the file for one process.
@@ -135,10 +135,9 @@ python3 cli/grokbot_alarm.py wait --id "$ID" --timeout 30
 2. Open the app and accept **Alerts** when asked.
 3. Tap **Screen**, **Battery**, and **DND**, and accept each system page. Screen has to show a check or the activity cannot come up over a sleeping lock screen. Battery keeps the listener alive. DND lets the sound play through Do Not Disturb.
 4. Wait until the dot is green. Leave the Alarm notification in the shade.
-5. Tap the copy button. On the bot machine:
+5. Tap **Copy** and paste the line into the bot chat. It reads `Set up grokbot-alarm with secret … on server …` and runs `init --secret … --server …`. Or run that yourself. Then:
 
 ```bash
-python3 cli/grokbot_alarm.py init --secret PASTED_SECRET
 ID=$(python3 cli/grokbot_alarm.py register --bot "coder" --task "Migrate the session store")
 python3 cli/grokbot_alarm.py ring --id "$ID" \
   --question "Keep server sessions or switch to signed tokens?" \
@@ -154,7 +153,7 @@ python3 cli/grokbot_alarm.py wait --id "$ID" --timeout 7200
 7. Tap one answer. The sound stops. Tap a next instruction, or type a short one and tap the send icon.
 8. The CLI prints one JSON line with `choice` and `instruction`. A bot following `skill/SKILL.md` applies the choice and starts the instruction without asking again.
 
-Register on its own does not ring. The setup screen lists the armed bot and task (moon icon) until the ring arrives. **Test** checks the ringer locally if you want to confirm sound and the two steps before involving the network.
+Register on its own does not ring. The setup screen lists the armed bot and task until the ring arrives. **Test** checks the ringer locally if you want to confirm sound and the two steps before involving the network.
 
 If a second ring arrives while the first alarm is still up, it waits and starts after the first answer is sent.
 
