@@ -84,6 +84,8 @@ Stdout on success is one JSON object and nothing else:
 - `choice` is the decision they picked. Apply it.
 - `instruction` is the next task. Start it immediately, with no extra confirmation.
 
+The phone sends one answer. If a duplicate is on the topic anyway, `wait` keeps the earliest one and ignores the rest. Do not ring again to ask them to pick between the two.
+
 Exit code `2` means they have not answered yet (`no answer yet` on stderr). Do not invent an answer and do not ring again. The phone keeps ringing until they answer. Check later with:
 
 ```bash

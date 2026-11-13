@@ -65,6 +65,19 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import org.json.JSONObject
 
+/** One in-flight or finished send per ring, shared by every copy of the screen. */
+internal object AnswerGate {
+    private val claimed = HashSet<String>()
+
+    fun claim(id: String): Boolean = synchronized(this) { claimed.add(id) }
+
+    fun release(id: String) {
+        synchronized(this) { claimed.remove(id) }
+    }
+
+    fun isClaimed(id: String): Boolean = synchronized(this) { id in claimed }
+}
+
 private val WakeLines = listOf(
     "Up. The work isn't.",
     "You dozed. It didn't.",
@@ -82,6 +95,10 @@ class AlarmActivity : ComponentActivity() {
         turnScreenOnOverLock()
         val payload = AlarmPayload.fromJson(intent.getStringExtra(EXTRA) ?: "")
         if (payload == null) {
+            finish()
+            return
+        }
+        if (!payload.test && (Prefs(this).isAnswered(payload.id) || AnswerGate.isClaimed(payload.id))) {
             finish()
             return
         }
@@ -146,10 +163,14 @@ private fun AlarmScreen(payload: AlarmPayload) {
             (context as? Activity)?.finish()
             return
         }
+        val alarmId = payload.id
+        if (Prefs(context).isAnswered(alarmId) || !AnswerGate.claim(alarmId)) {
+            (context as? Activity)?.finish()
+            return
+        }
         sending = true
         failed = false
         val app = context.applicationContext
-        val alarmId = payload.id
         val server = Prefs(app).server
         val body = JSONObject()
             .put("v", 1)
@@ -162,14 +183,16 @@ private fun AlarmScreen(payload: AlarmPayload) {
             val ok = runCatching {
                 Ntfy.publish(server, payload.replyTopic, body, 4)
             }.isSuccess
-            // Mark handled before touching the activity. A reconnect or a
-            // Samsung full-screen re-fire must not ring this id again.
-            if (ok && !payload.test) ListenService.markAnswered(app, alarmId)
+            if (ok) {
+                ListenService.markAnswered(app, alarmId)
+            } else {
+                AnswerGate.release(alarmId)
+            }
             Handler(Looper.getMainLooper()).post {
                 val activity = context as? Activity
                 if (activity == null || activity.isDestroyed) return@post
-                sending = false
                 if (!ok) {
+                    sending = false
                     failed = true
                     return@post
                 }

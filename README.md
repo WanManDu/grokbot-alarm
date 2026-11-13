@@ -57,6 +57,8 @@ Answer (stdout of `wait` / `poll`):
 
 `choice` is the decision that stopped the alarm. `instruction` is the next task, either a suggested option or free text.
 
+If the reply topic has more than one answer for the same id, the earliest one wins. `wait` and `poll` keep that first answer and ignore later duplicates, including ones that show up in the same poll.
+
 ## App install
 
 No Android Studio. The debug APK is a workflow artifact named **grokbot-alarm-debug** on every push and pull request (Actions → Android → `debug-apk`). A `v*` tag also attaches that APK to a GitHub Release.
@@ -173,14 +175,7 @@ The debug APK is signed with `android/debug.keystore` (password `android`, alias
 
 ## Support
 
-The home screen can show a small "Fuel the bot." link. It stays hidden until you set a URL. No in-app purchases.
-
-```bash
-cd android
-./gradlew assembleDebug -PDONATE_URL=https://example.com/donate
-```
-
-Or put `DONATE_URL=https://example.com/donate` in `android/gradle.properties`. The default is empty. `.github/FUNDING.yml` is a commented placeholder for the same idea on GitHub.
+The home screen shows **Fuel the bot.** It opens [GitHub Sponsors for WanManDu](https://github.com/sponsors/WanManDu). No in-app purchases. The Sponsors profile may 404 until GitHub approves it. The same link is `DONATE_URL` in `android/gradle.properties` and `github: [WanManDu]` in `.github/FUNDING.yml`. Set `DONATE_URL` empty to hide the button.
 
 ## License
 

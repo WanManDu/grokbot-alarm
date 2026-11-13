@@ -53,12 +53,12 @@ class Handler(BaseHTTPRequestHandler):
         with LOCK:
             bodies = list(STORE.get(topic, []))
         lines = []
-        for body in bodies:
+        for index, body in enumerate(bodies):
             lines.append(
                 json.dumps(
                     {
-                        "id": "m",
-                        "time": 1,
+                        "id": f"m{index}",
+                        "time": index + 1,
                         "event": "message",
                         "topic": topic,
                         "message": body,
@@ -221,6 +221,51 @@ class CliTest(unittest.TestCase):
         self.assertEqual(needs["type"], "needs")
         self.assertEqual(needs["escalateAfter"], 90)
         self.assertEqual(needs["agent"], "coder")
+
+    def test_first_answer_wins_when_duplicates_arrive(self) -> None:
+        init = self.run_cli("init", "--server", self.base)
+        self.assertEqual(init.returncode, 0, init.stderr)
+        paired = json.loads(init.stdout)
+        registered = self.run_cli("register", "--bot", "coder", "--task", "A task")
+        alarm_id = registered.stdout.strip()
+        ring = self.run_cli(
+            "ring",
+            "--id",
+            alarm_id,
+            "--question",
+            "Ship it?",
+            "--option",
+            "Yes",
+            "--option",
+            "No",
+        )
+        self.assertEqual(ring.returncode, 0, ring.stderr)
+
+        def post(instruction: str) -> None:
+            body = json.dumps(
+                {
+                    "v": 1,
+                    "type": "answer",
+                    "id": alarm_id,
+                    "choice": "Yes",
+                    "instruction": instruction,
+                }
+            )
+            req = urllib.request.Request(
+                f"{self.base}/{paired['reply']}",
+                data=body.encode(),
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                self.assertEqual(resp.status, 200)
+
+        post("잠깐 멈춰")
+        post("계속 개발해")
+        waited = self.run_cli("wait", "--id", alarm_id, "--timeout", "5")
+        self.assertEqual(waited.returncode, 0, waited.stderr)
+        self.assertEqual(json.loads(waited.stdout)["instruction"], "잠깐 멈춰")
+        polled = self.run_cli("poll", "--id", alarm_id)
+        self.assertEqual(json.loads(polled.stdout)["instruction"], "잠깐 멈춰")
 
 
 if __name__ == "__main__":

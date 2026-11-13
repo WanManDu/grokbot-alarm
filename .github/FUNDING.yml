@@ -1,4 +1,1 @@
-# Placeholder. Uncomment and replace when a donation URL exists.
-# The app reads the same kind of URL from the Gradle property DONATE_URL.
-# github: [WanManDu]
-# custom: ["https://example.com/donate"]
+github: [WanManDu]

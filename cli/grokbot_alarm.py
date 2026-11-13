@@ -167,8 +167,16 @@ def poll_messages(server: str, topic: str, since: int, timeout: float = 30) -> l
 
 
 def extract_answer(messages: list[dict], alarm_id: str) -> dict | None:
-    found = None
-    for msg in messages:
+    """Return the earliest answer for this id.
+
+    A ring is supposed to produce one answer. If duplicates are on the topic,
+    the smallest ntfy ``time`` wins. Messages with no time keep first-seen
+    order and lose to any timestamped message. The caller caches the result
+    and does not replace it on a later poll.
+    """
+    best = None
+    best_key = None
+    for index, msg in enumerate(messages):
         event = msg.get("event")
         if event not in (None, "message"):
             continue
@@ -187,14 +195,20 @@ def extract_answer(messages: list[dict], alarm_id: str) -> dict | None:
         instruction = " ".join(str(payload.get("instruction") or "").split())
         if not instruction:
             continue
-        found = {
+        answer = {
             "v": 1,
             "type": "answer",
             "id": alarm_id,
             "choice": choice,
             "instruction": instruction,
         }
-    return found
+        raw_time = msg.get("time")
+        # Timestamped answers sort before untimestamped ones, then by time.
+        key = (0, raw_time, index) if isinstance(raw_time, int) else (1, index, index)
+        if best_key is None or key < best_key:
+            best = answer
+            best_key = key
+    return best
 
 
 def cmd_init(args: argparse.Namespace) -> int:
