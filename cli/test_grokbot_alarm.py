@@ -97,6 +97,7 @@ class CliTest(unittest.TestCase):
         env["GROKBOT_ALARM_HOME"] = self.home
         env.pop("GROKBOT_ALARM_SECRET", None)
         env.pop("GROKBOT_ALARM_SERVER", None)
+        env.pop("GROKBOT_ALARM_AGENT", None)
         return subprocess.run(
             [sys.executable, str(CLI), *args],
             capture_output=True,

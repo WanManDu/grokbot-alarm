@@ -341,5 +341,11 @@ fun inboxTopic(secret: String) = "gba$secret"
 fun replyTopic(secret: String) = "gbr$secret"
 
 fun setupLine(name: String, secret: String, server: String): String {
-    return "Set up grokbot-alarm with secret $secret on server $server as $name"
+    val safe = name.replace("\"", "").replace("'", "").trim().ifBlank { "AI" }
+    return "Set up grokbot-alarm for me (phone alarm that wakes me when you need me). " +
+        "Don't use ntfy directly, and don't invent topics. " +
+        "Run: curl -fsSL https://raw.githubusercontent.com/WanManDu/grokbot-alarm/main/install.sh | sh -s -- " +
+        "--secret $secret --server $server --agent \"$safe\". " +
+        "Then read ~/.local/share/grokbot-alarm/SKILL.md and follow it whenever I ask to be woken or you need my decision. " +
+        "If you can save a skill or a memory, save that file so you still have it next time."
 }

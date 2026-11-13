@@ -28,7 +28,7 @@ DEFAULT_SERVER = "https://ntfy.sh"
 MAX_TIMEOUT = 24 * 60 * 60
 
 
-def home_dir() -> Path:
+def config_root() -> Path:
     override = os.environ.get("GROKBOT_ALARM_HOME")
     if override:
         return Path(override)
@@ -37,12 +37,27 @@ def home_dir() -> Path:
     return base / "grokbot-alarm"
 
 
-def config_path() -> Path:
-    return home_dir() / "config.json"
+def agent_slug(name: str) -> str:
+    chars = []
+    for ch in name.strip().lower():
+        if ch.isalnum() or ch in "-_":
+            chars.append(ch)
+        elif ch.isspace() or ch in "/":
+            chars.append("-")
+    slug = "".join(chars).strip("-")
+    return (slug or "agent")[:40]
 
 
-def state_path() -> Path:
-    return home_dir() / "state.json"
+def agents_dir() -> Path:
+    return config_root() / "agents"
+
+
+def agent_config_path(name: str) -> Path:
+    return agents_dir() / f"{agent_slug(name)}.json"
+
+
+def agent_state_path(name: str) -> Path:
+    return agents_dir() / f"{agent_slug(name)}.state.json"
 
 
 def inbox_topic(secret: str) -> str:
@@ -77,25 +92,69 @@ def clean_text(value: str, limit: int) -> str:
     return text
 
 
-def load_config() -> dict:
+def list_agents() -> list[dict]:
+    found: list[dict] = []
+    directory = agents_dir()
+    if directory.is_dir():
+        for path in sorted(directory.glob("*.json")):
+            if path.name.endswith(".state.json"):
+                continue
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if isinstance(data, dict) and data.get("secret"):
+                data.setdefault("agent", "default")
+                found.append(data)
+    legacy = config_root() / "config.json"
+    if not found and legacy.exists():
+        try:
+            data = json.loads(legacy.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            data = {}
+        if isinstance(data, dict) and data.get("secret"):
+            data.setdefault("agent", "default")
+            found.append(data)
+    return found
+
+
+def resolve_agent_name(explicit: str | None) -> str:
+    raw = explicit if explicit not in (None, "") else os.environ.get("GROKBOT_ALARM_AGENT")
+    if raw:
+        return clean_text(str(raw), 40)
+    agents = list_agents()
+    if len(agents) == 1:
+        return str(agents[0].get("agent") or "default")
+    if not agents:
+        raise RuntimeError("no pairing config; paste the phone's setup line so install.sh can run")
+    names = ", ".join(str(item.get("agent") or "?") for item in agents)
+    raise RuntimeError(f"multiple agents ({names}); pass --agent or set GROKBOT_ALARM_AGENT")
+
+
+def load_config(explicit_agent: str | None = None) -> dict:
+    agent = resolve_agent_name(explicit_agent)
     data: dict = {}
-    path = config_path()
+    path = agent_config_path(agent)
     if path.exists():
         data = json.loads(path.read_text(encoding="utf-8"))
+    else:
+        for item in list_agents():
+            if str(item.get("agent") or "") == agent:
+                data = item
+                break
     server = os.environ.get("GROKBOT_ALARM_SERVER") or data.get("server") or ""
     secret = os.environ.get("GROKBOT_ALARM_SECRET") or data.get("secret") or ""
-    agent = os.environ.get("GROKBOT_ALARM_AGENT") or data.get("agent") or ""
     if not server or not secret:
-        raise RuntimeError("no pairing config; run: grokbot-alarm init --secret <from the phone>")
+        raise RuntimeError(f"no pairing config for {agent}; paste that AI's setup line")
     if not valid_server(server):
         raise RuntimeError(f"bad server URL: {server}")
     if not valid_secret(secret):
         raise RuntimeError("secret must be 16-40 chars of letters, digits, '_' or '-'")
-    return {"server": server.rstrip("/"), "secret": secret, "agent": str(agent).strip()}
+    return {"server": server.rstrip("/"), "secret": secret, "agent": agent}
 
 
-def load_state() -> dict:
-    path = state_path()
+def load_state(agent: str) -> dict:
+    path = agent_state_path(agent)
     if not path.exists():
         return {"alarms": {}}
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -103,8 +162,8 @@ def load_state() -> dict:
     return data
 
 
-def save_state(state: dict) -> None:
-    path = state_path()
+def save_state(agent: str, state: dict) -> None:
+    path = agent_state_path(agent)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
@@ -212,26 +271,26 @@ def extract_answer(messages: list[dict], alarm_id: str) -> dict | None:
 
 
 def cmd_init(args: argparse.Namespace) -> int:
-    path = config_path()
+    try:
+        if args.agent:
+            agent = clean_text(args.agent, 40)
+        else:
+            agents = list_agents()
+            agent = str(agents[0].get("agent") or "default") if len(agents) == 1 else "default"
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    path = agent_config_path(agent)
     existing: dict = {}
     if path.exists():
         existing = json.loads(path.read_text(encoding="utf-8"))
-    untouched = path.exists() and not args.force and not args.secret and not args.server and not args.agent
+    untouched = path.exists() and not args.force and not args.secret and not args.server
     if untouched:
         secret = existing["secret"]
         server = existing["server"].rstrip("/")
-        agent = str(existing.get("agent") or "")
     else:
         server = (args.server or existing.get("server") or DEFAULT_SERVER).rstrip("/")
         secret = args.secret or (None if args.force else existing.get("secret")) or secrets.token_hex(16)
-        if args.agent is not None:
-            try:
-                agent = clean_text(args.agent, 40)
-            except ValueError as exc:
-                print(str(exc), file=sys.stderr)
-                return 1
-        else:
-            agent = str(existing.get("agent") or "")
         if not valid_server(server):
             print("server must be an http(s) URL", file=sys.stderr)
             return 1
@@ -239,29 +298,29 @@ def cmd_init(args: argparse.Namespace) -> int:
             print("secret must be 16-40 chars of letters, digits, '_' or '-'", file=sys.stderr)
             return 1
         path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"server": server, "secret": secret}
-        if agent:
-            payload["agent"] = agent
+        payload = {"server": server, "secret": secret, "agent": agent}
         tmp = path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         os.chmod(tmp, 0o600)
         tmp.replace(path)
-    printed = {
-        "server": server,
-        "secret": secret,
-        "inbox": inbox_topic(secret),
-        "reply": reply_topic(secret),
-    }
-    if agent:
-        printed["agent"] = agent
-    print(json.dumps(printed))
+    print(
+        json.dumps(
+            {
+                "server": server,
+                "secret": secret,
+                "agent": agent,
+                "inbox": inbox_topic(secret),
+                "reply": reply_topic(secret),
+            }
+        )
+    )
     print(f"config: {path}", file=sys.stderr)
     return 0
 
 
 def cmd_register(args: argparse.Namespace) -> int:
     try:
-        cfg = load_config()
+        cfg = load_config(args.agent)
         bot = clean_text(args.bot, 40)
         task = clean_text(args.task, 140)
     except (RuntimeError, ValueError) as exc:
@@ -277,7 +336,7 @@ def cmd_register(args: argparse.Namespace) -> int:
     except Exception as exc:  # noqa: BLE001 - surface any transport failure
         print(str(exc), file=sys.stderr)
         return 1
-    state = load_state()
+    state = load_state(cfg["agent"])
     state["alarms"][alarm_id] = {
         "bot": bot,
         "task": task,
@@ -285,14 +344,14 @@ def cmd_register(args: argparse.Namespace) -> int:
         "reply_topic": reply_topic(cfg["secret"]),
         "answer": None,
     }
-    save_state(state)
+    save_state(cfg["agent"], state)
     print(alarm_id)
     return 0
 
 
 def cmd_ring(args: argparse.Namespace) -> int:
     try:
-        cfg = load_config()
+        cfg = load_config(args.agent)
         question = clean_text(args.question, 200)
         options = [clean_text(item, 80) for item in args.options]
         nxt = [clean_text(item, 80) for item in (args.next_options or [])]
@@ -305,7 +364,7 @@ def cmd_ring(args: argparse.Namespace) -> int:
     if len(nxt) > 6:
         print("ring accepts at most 6 --next values", file=sys.stderr)
         return 1
-    state = load_state()
+    state = load_state(cfg["agent"])
     record = state["alarms"].get(args.id)
     if record is None and (not args.bot or not args.task):
         print("unknown id; register first, or pass --bot and --task", file=sys.stderr)
@@ -349,7 +408,7 @@ def cmd_ring(args: argparse.Namespace) -> int:
         "reply_topic": reply,
         "answer": None,
     }
-    save_state(state)
+    save_state(cfg["agent"], state)
     if escalate > 0:
         print(f"needs you {args.id}; alarm in {escalate}s", file=sys.stderr)
     else:
@@ -359,7 +418,7 @@ def cmd_ring(args: argparse.Namespace) -> int:
 
 def cmd_wait(args: argparse.Namespace, single: bool) -> int:
     try:
-        cfg = load_config()
+        cfg = load_config(getattr(args, "agent", None))
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -367,7 +426,7 @@ def cmd_wait(args: argparse.Namespace, single: bool) -> int:
     if timeout < 0 or timeout > MAX_TIMEOUT:
         print(f"timeout must be between 0 and {MAX_TIMEOUT}", file=sys.stderr)
         return 1
-    state = load_state()
+    state = load_state(cfg["agent"])
     record = state["alarms"].get(args.id)
     if record is None:
         print("unknown id; register it on this machine first", file=sys.stderr)
@@ -391,7 +450,7 @@ def cmd_wait(args: argparse.Namespace, single: bool) -> int:
         if answer:
             record["answer"] = answer
             state["alarms"][args.id] = record
-            save_state(state)
+            save_state(cfg["agent"], state)
             print(json.dumps(answer, ensure_ascii=False))
             return 0
         if single or time.time() >= deadline:
@@ -414,10 +473,12 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--force", action="store_true", help="rotate the secret")
 
     reg = sub.add_parser("register", help="arm a silent wake request")
+    reg.add_argument("--agent", help="paired AI name, or set GROKBOT_ALARM_AGENT")
     reg.add_argument("--bot", required=True, help="short name shown on the phone")
     reg.add_argument("--task", required=True, help="one short line: what you are about to do")
 
     ring = sub.add_parser("ring", help="start the alarm")
+    ring.add_argument("--agent", help="paired AI name, or set GROKBOT_ALARM_AGENT")
     ring.add_argument("--id", required=True)
     ring.add_argument("--question", required=True)
     ring.add_argument("--option", action="append", required=True, dest="options")
@@ -432,10 +493,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     wait = sub.add_parser("wait", help="block until the phone answers")
+    wait.add_argument("--agent", help="paired AI name, or set GROKBOT_ALARM_AGENT")
     wait.add_argument("--id", required=True)
     wait.add_argument("--timeout", type=int, default=600, help="seconds; 0 checks once (default 600)")
 
     poll = sub.add_parser("poll", help="check once for an answer")
+    poll.add_argument("--agent", help="paired AI name, or set GROKBOT_ALARM_AGENT")
     poll.add_argument("--id", required=True)
     return parser
 

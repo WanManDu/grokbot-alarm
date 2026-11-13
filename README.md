@@ -88,15 +88,11 @@ Run ntfy, put its base URL in **Server**, tap **Save**, then **Copy** and paste 
 
 ## Skill and CLI install
 
-On the bot machine, from a clone of this repo, either paste the phone's Copy line into the bot (it should run the command below) or run it yourself:
+Paste the phone's **Copy** block into the bot. A bot with no prior context can run it. The block curls `install.sh` from `main`, which downloads the CLI and `SKILL.md`, puts `~/.local/bin/grokbot-alarm` on PATH, and runs `init`. Until this branch is merged, that raw `main` URL 404s. `install.sh` itself then tries this branch. The pasted line does not, so it only works for other people after merge.
 
-```bash
-python3 cli/grokbot_alarm.py init --secret SECRET --server https://ntfy.sh --agent "coder"
-```
+Each Connected AI gets its own file, `~/.config/grokbot-alarm/agents/<name>.json` (mode 0600), so bots that share a machine do not overwrite each other. Pass `--agent` or set `GROKBOT_ALARM_AGENT`. `GROKBOT_ALARM_HOME` overrides the config root. `GROKBOT_ALARM_SERVER` and `GROKBOT_ALARM_SECRET` override that agent's file for one process.
 
-That writes `~/.config/grokbot-alarm/config.json` (mode 0600). `GROKBOT_ALARM_HOME` overrides the directory. `GROKBOT_ALARM_SERVER` and `GROKBOT_ALARM_SECRET` override the file for one process.
-
-Give the bot `skill/SKILL.md` the same way its other skills are installed (copy the file into the skills directory the bot reads). The skill tells it when to register, how to write the one decision question, and to continue from `choice` and `instruction` without asking again.
+The installed skill tells the bot when to register, how to write the one decision question, and to continue from `choice` and `instruction` without asking again. It also tells the bot to save the file as a persistent skill if the platform allows that.
 
 Commands:
 
