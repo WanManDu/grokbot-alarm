@@ -1,0 +1,16 @@
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+.kotlin/
+*.apk
+*.aab
+captures/
+cli/__pycache__/
+**/__pycache__/
+*.py[cod]
+.DS_Store
+android/.gradle/
+android/**/build/
+*.log
