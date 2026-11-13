@@ -38,13 +38,21 @@ jobs:
           unzip -q /tmp/cmdtools.zip -d /tmp
           rm -rf "$SDK/cmdline-tools/latest"
           mv /tmp/cmdline-tools "$SDK/cmdline-tools/latest"
+          # GitHub-hosted runners already set ANDROID_SDK_ROOT to a preinstalled SDK.
+          # AGP 9 refuses to build when that and ANDROID_HOME disagree, so both
+          # must name the SDK we just populated.
           echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
           echo "$SDK/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
-          yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
-          "$SDK/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" "build-tools;37.0.0"
+          yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$SDK" --licenses >/dev/null || true
+          "$SDK/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$SDK" \
+            "platforms;android-37.0" "build-tools;36.0.0" "build-tools;37.0.0" "platform-tools"
 
       - name: Build debug APK
         working-directory: android
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
         run: ./gradlew assembleDebug --stacktrace --no-daemon
 
       - name: Rename APK
