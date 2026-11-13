@@ -7,7 +7,7 @@ class GrokbotApp : Application() {
         super.onCreate()
         ListenService.createChannels(this)
         val prefs = Prefs(this)
-        prefs.ensureSecret()
-        ListenState.replacePending(prefs.pending())
+        prefs.migrate()
+        ListenState.reload(prefs)
     }
 }

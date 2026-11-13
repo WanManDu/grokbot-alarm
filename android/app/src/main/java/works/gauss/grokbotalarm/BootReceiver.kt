@@ -9,7 +9,8 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         if (intent?.action != Intent.ACTION_BOOT_COMPLETED) return
         val prefs = Prefs(context)
-        if (!validSecret(prefs.secret)) return
+        prefs.migrate()
+        if (prefs.agents().isEmpty()) return
         if (!Permissions.notificationsGranted(context)) return
         try {
             ListenService.start(context)

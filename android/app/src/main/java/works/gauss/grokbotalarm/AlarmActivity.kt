@@ -91,7 +91,8 @@ class AlarmActivity : ComponentActivity() {
                 override fun handleOnBackPressed() = Unit
             },
         )
-        Ringer.start(this, payload.id)
+        val quiet = intent.getBooleanExtra(EXTRA_QUIET, false)
+        if (!quiet) Ringer.start(this, payload.id)
         setContent {
             AlarmTheme {
                 AlarmScreen(payload)
@@ -115,6 +116,7 @@ class AlarmActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA = "payload"
+        const val EXTRA_QUIET = "quiet"
     }
 }
 
@@ -194,6 +196,15 @@ private fun AlarmScreen(payload: AlarmPayload) {
             )
         }
 
+        if (payload.agent.isNotBlank() && payload.agent != payload.bot) {
+            Text(
+                text = payload.agent,
+                color = AlarmPalette.Accent,
+                fontFamily = AlarmFont,
+                fontWeight = FontWeight.Bold,
+                fontSize = 16.sp,
+            )
+        }
         Text(
             text = payload.bot.ifBlank { "—" },
             color = AlarmPalette.White,

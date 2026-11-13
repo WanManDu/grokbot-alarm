@@ -1,13 +1,13 @@
 # grokbot-alarm
 
-An alarm for people building with [Grok Bot](https://x.ai) who keep working until they fall asleep. The bot registers a wake, rings the phone when the task actually finishes, and does not stop ringing until the person answers **one real decision** about that task. They then tap or type the next instruction. That answer goes back to the same bot, which continues immediately.
+An alarm for when an AI is stuck on a human. The person pairs each AI (a Grok Bot, or any other agent on a Linux box). That AI registers tasks. When it needs an approval or the next step, it posts a needs-you. If the human doesn't answer in time, the phone escalates to a full alarm and will not stop ringing until they solve **one real decision** about that task, then send the next instruction. The answer goes back to that AI, which continues immediately.
 
-The UI is icon-first. The few English words are permission names and a test button. Questions and options are shown in whatever language the bot sent.
+The home screen is the list of Connected AIs. Each AI has its own secret, so one chat cannot see another's tasks. Questions and options are shown in whatever language the AI sent.
 
 ```
-phone app                         ntfy                          bot CLI
-ListenService  -- subscribe ---->  gba<secret>  <--- register / ring
-AlarmActivity  -- post answer -->  gbr<secret>  ---> wait / poll
+phone                                 ntfy                              AI CLI
+ListenService -- subscribe all ---->  gba<secret per AI>  <--- register / needs / ring
+AlarmActivity -- post answer ------>  gbr<secret per AI>  ---> wait / poll
 ```
 
 ## Why ntfy, not FCM
@@ -31,16 +31,22 @@ Topics, each 1–64 characters, derived from a 32-hex-char secret:
 
 Bodies are JSON, version 1.
 
-Register (silent; the phone lists it, it does not ring):
+Register (the task shows as Working, no ring):
 
 ```json
-{"v":1,"type":"register","id":"<id>","bot":"coder","task":"Split the session store"}
+{"v":1,"type":"register","id":"<id>","agent":"coder","bot":"coder","task":"Split the session store"}
 ```
 
-Ring:
+Needs-you (notification now, full alarm after `escalateAfter` seconds if still unanswered):
 
 ```json
-{"v":1,"type":"alarm","id":"<id>","bot":"coder","task":"Split the session store","question":"Keep server sessions or switch to signed tokens?","options":["Keep sessions","Switch to signed tokens"],"next":["Open a PR","Stop"],"replyTopic":"gbr<secret>"}
+{"v":1,"type":"needs","id":"<id>","agent":"coder","bot":"coder","task":"Split the session store","question":"Sessions or signed tokens?","options":["Keep sessions","Signed tokens"],"next":["Open a PR","Stop"],"replyTopic":"gbr<secret>","escalateAfter":120}
+```
+
+Ring now (same body as needs, `type` is `alarm`, no `escalateAfter`):
+
+```json
+{"v":1,"type":"alarm","id":"<id>","agent":"coder","bot":"coder","task":"Split the session store","question":"Sessions or signed tokens?","options":["Keep sessions","Signed tokens"],"next":["Open a PR","Stop"],"replyTopic":"gbr<secret>"}
 ```
 
 Answer (stdout of `wait` / `poll`):
@@ -64,7 +70,7 @@ No Android Studio. The debug APK is a workflow artifact named **grokbot-alarm-de
    - **Battery** — ignore battery optimizations, so the listener is not frozen while the phone sleeps.
    - **DND** — notification policy access. While the alarm is ringing the app switches interruption filter to all, which is as far as stock Android lets a normal app play through Do Not Disturb. The alarm stream (`USAGE_ALARM`) already plays when the ringer is silent.
 5. The round dot at the top turns green when the listener is connected. An ongoing notification titled Alarm stays in the shade. That is expected.
-6. Tap **Copy**. The clipboard gets one line: `Set up grokbot-alarm with secret <secret> on server <server>`. Paste that into the bot chat. The bot runs `init` with those two values. **Save** writes the same fields without copying. You can also paste a secret into **Secret** and a URL into **Server**, then Save.
+6. Tap **Add**, name that AI, then **Copy**. The clipboard gets one line: `Set up grokbot-alarm with secret <secret> on server <server> as <name>`. Paste it into that AI's chat. The bot runs `init --secret … --server … --agent …`. Repeat Add for each AI. **Phone** holds Server, Alerts, Screen, Battery, DND, and Test.
 
 **Test** plays a local alarm with no network. The question is `2 + 2`. Tap `4` (the sound stops) then `OK`. Nothing is sent.
 
@@ -83,7 +89,7 @@ Run ntfy, put its base URL in **Server**, tap **Save**, then **Copy** and paste 
 On the bot machine, from a clone of this repo, either paste the phone's Copy line into the bot (it should run the command below) or run it yourself:
 
 ```bash
-python3 cli/grokbot_alarm.py init --secret SECRET --server https://ntfy.sh
+python3 cli/grokbot_alarm.py init --secret SECRET --server https://ntfy.sh --agent "coder"
 ```
 
 That writes `~/.config/grokbot-alarm/config.json` (mode 0600). `GROKBOT_ALARM_HOME` overrides the directory. `GROKBOT_ALARM_SERVER` and `GROKBOT_ALARM_SECRET` override the file for one process.
@@ -133,9 +139,8 @@ python3 cli/grokbot_alarm.py wait --id "$ID" --timeout 30
 
 1. Install the debug APK from the **grokbot-alarm-debug** artifact on this branch (Actions → the Android workflow → `debug-apk` → Artifacts). Allow the browser or Files app to install it.
 2. Open the app and accept **Alerts** when asked.
-3. Tap **Screen**, **Battery**, and **DND**, and accept each system page. Screen has to show a check or the activity cannot come up over a sleeping lock screen. Battery keeps the listener alive. DND lets the sound play through Do Not Disturb.
-4. Wait until the dot is green. Leave the Alarm notification in the shade.
-5. Tap **Copy** and paste the line into the bot chat. It reads `Set up grokbot-alarm with secret … on server …` and runs `init --secret … --server …`. Or run that yourself. Then:
+3. Open **Phone**. Tap **Screen**, **Battery**, and **DND**, and accept each system page. **On** means granted. Screen has to be On or the activity cannot come up over a sleeping lock screen. Battery keeps the listener alive. DND lets the sound play through Do Not Disturb. **Test** on this screen fires a local alarm.
+4. Back on the home screen, tap **Add**, name the AI, open it, tap **Copy**, and paste the line into that AI's chat. It includes `as <name>`. The bot runs `init` with the secret, server, and agent name. The dot turns to **Ears on** once that AI exists and alerts are allowed. Then, for a quiet ask that escalates, use `--escalate-after 120` on `ring`. Omit it to ring immediately:
 
 ```bash
 ID=$(python3 cli/grokbot_alarm.py register --bot "coder" --task "Migrate the session store")
@@ -149,11 +154,11 @@ python3 cli/grokbot_alarm.py ring --id "$ID" \
 python3 cli/grokbot_alarm.py wait --id "$ID" --timeout 7200
 ```
 
-6. Lock the phone and turn the screen off. It should wake and ring, getting louder, including while the ringer is silent. On screen, in this order: a short wake-up line, the bot name, the task, then the question in large white type, then the answer buttons. If you only see the buttons, the build is wrong.
-7. Tap one answer. The sound stops. Tap a next instruction, or type a short one and tap the send icon.
-8. The CLI prints one JSON line with `choice` and `instruction`. A bot following `skill/SKILL.md` applies the choice and starts the instruction without asking again.
+5. Lock the phone and turn the screen off. It should wake and ring, getting louder, including while the ringer is silent. On screen, in this order: a short wake-up line, the bot name, the task, then the question in large white type, then the answer buttons. If you only see the buttons, the build is wrong.
+6. Tap one answer. The sound stops. Tap a next instruction, or type a short one and tap the send icon.
+7. The CLI prints one JSON line with `choice` and `instruction`. A bot following `skill/SKILL.md` applies the choice and starts the instruction without asking again.
 
-Register on its own does not ring. The setup screen lists the armed bot and task until the ring arrives. **Test** checks the ringer locally if you want to confirm sound and the two steps before involving the network.
+`register` alone does not ring. The AI's screen lists the task as Working until `ring`. With `--escalate-after`, it shows as Your move and posts a notification first; the alarm starts only if you don't answer. **Test** under Phone checks the ringer with no network.
 
 If a second ring arrives while the first alarm is still up, it waits and starts after the first answer is sent.
 

@@ -84,13 +84,14 @@ def load_config() -> dict:
         data = json.loads(path.read_text(encoding="utf-8"))
     server = os.environ.get("GROKBOT_ALARM_SERVER") or data.get("server") or ""
     secret = os.environ.get("GROKBOT_ALARM_SECRET") or data.get("secret") or ""
+    agent = os.environ.get("GROKBOT_ALARM_AGENT") or data.get("agent") or ""
     if not server or not secret:
         raise RuntimeError("no pairing config; run: grokbot-alarm init --secret <from the phone>")
     if not valid_server(server):
         raise RuntimeError(f"bad server URL: {server}")
     if not valid_secret(secret):
         raise RuntimeError("secret must be 16-40 chars of letters, digits, '_' or '-'")
-    return {"server": server.rstrip("/"), "secret": secret}
+    return {"server": server.rstrip("/"), "secret": secret, "agent": str(agent).strip()}
 
 
 def load_state() -> dict:
@@ -198,17 +199,25 @@ def extract_answer(messages: list[dict], alarm_id: str) -> dict | None:
 
 def cmd_init(args: argparse.Namespace) -> int:
     path = config_path()
-    if path.exists() and not args.force and not args.secret and not args.server:
+    existing: dict = {}
+    if path.exists():
         existing = json.loads(path.read_text(encoding="utf-8"))
+    untouched = path.exists() and not args.force and not args.secret and not args.server and not args.agent
+    if untouched:
         secret = existing["secret"]
         server = existing["server"].rstrip("/")
+        agent = str(existing.get("agent") or "")
     else:
-        if path.exists() and not args.force and (args.secret or args.server):
-            existing = json.loads(path.read_text(encoding="utf-8"))
-        else:
-            existing = {}
         server = (args.server or existing.get("server") or DEFAULT_SERVER).rstrip("/")
         secret = args.secret or (None if args.force else existing.get("secret")) or secrets.token_hex(16)
+        if args.agent is not None:
+            try:
+                agent = clean_text(args.agent, 40)
+            except ValueError as exc:
+                print(str(exc), file=sys.stderr)
+                return 1
+        else:
+            agent = str(existing.get("agent") or "")
         if not valid_server(server):
             print("server must be an http(s) URL", file=sys.stderr)
             return 1
@@ -217,20 +226,21 @@ def cmd_init(args: argparse.Namespace) -> int:
             return 1
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {"server": server, "secret": secret}
+        if agent:
+            payload["agent"] = agent
         tmp = path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         os.chmod(tmp, 0o600)
         tmp.replace(path)
-    print(
-        json.dumps(
-            {
-                "server": server,
-                "secret": secret,
-                "inbox": inbox_topic(secret),
-                "reply": reply_topic(secret),
-            }
-        )
-    )
+    printed = {
+        "server": server,
+        "secret": secret,
+        "inbox": inbox_topic(secret),
+        "reply": reply_topic(secret),
+    }
+    if agent:
+        printed["agent"] = agent
+    print(json.dumps(printed))
     print(f"config: {path}", file=sys.stderr)
     return 0
 
@@ -244,10 +254,10 @@ def cmd_register(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     alarm_id = secrets.token_hex(8)
-    body = json.dumps(
-        {"v": 1, "type": "register", "id": alarm_id, "bot": bot, "task": task},
-        ensure_ascii=False,
-    )
+    message = {"v": 1, "type": "register", "id": alarm_id, "bot": bot, "task": task}
+    if cfg.get("agent"):
+        message["agent"] = cfg["agent"]
+    body = json.dumps(message, ensure_ascii=False)
     try:
         publish(cfg["server"], inbox_topic(cfg["secret"]), body, priority=3)
     except Exception as exc:  # noqa: BLE001 - surface any transport failure
@@ -292,23 +302,29 @@ def cmd_ring(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+    escalate = args.escalate_after
+    if escalate < 0 or escalate > MAX_TIMEOUT:
+        print(f"--escalate-after must be between 0 and {MAX_TIMEOUT}", file=sys.stderr)
+        return 1
     reply = reply_topic(cfg["secret"])
-    body = json.dumps(
-        {
-            "v": 1,
-            "type": "alarm",
-            "id": args.id,
-            "bot": bot,
-            "task": task,
-            "question": question,
-            "options": options,
-            "next": nxt,
-            "replyTopic": reply,
-        },
-        ensure_ascii=False,
-    )
+    message = {
+        "v": 1,
+        "type": "needs" if escalate > 0 else "alarm",
+        "id": args.id,
+        "bot": bot,
+        "task": task,
+        "question": question,
+        "options": options,
+        "next": nxt,
+        "replyTopic": reply,
+    }
+    if cfg.get("agent"):
+        message["agent"] = cfg["agent"]
+    if escalate > 0:
+        message["escalateAfter"] = escalate
+    body = json.dumps(message, ensure_ascii=False)
     try:
-        publish(cfg["server"], inbox_topic(cfg["secret"]), body, priority=5)
+        publish(cfg["server"], inbox_topic(cfg["secret"]), body, priority=4 if escalate > 0 else 5)
     except Exception as exc:  # noqa: BLE001
         print(str(exc), file=sys.stderr)
         return 1
@@ -320,7 +336,10 @@ def cmd_ring(args: argparse.Namespace) -> int:
         "answer": None,
     }
     save_state(state)
-    print(f"ringing {args.id}", file=sys.stderr)
+    if escalate > 0:
+        print(f"needs you {args.id}; alarm in {escalate}s", file=sys.stderr)
+    else:
+        print(f"ringing {args.id}", file=sys.stderr)
     return 0
 
 
@@ -377,6 +396,7 @@ def build_parser() -> argparse.ArgumentParser:
     init = sub.add_parser("init", help="write the pairing config")
     init.add_argument("--server", help=f"ntfy base URL (default {DEFAULT_SERVER})")
     init.add_argument("--secret", help="secret copied from the phone, or any 16-40 char token")
+    init.add_argument("--agent", help="name of this AI, shown on the phone")
     init.add_argument("--force", action="store_true", help="rotate the secret")
 
     reg = sub.add_parser("register", help="arm a silent wake request")
@@ -390,6 +410,12 @@ def build_parser() -> argparse.ArgumentParser:
     ring.add_argument("--next", action="append", dest="next_options")
     ring.add_argument("--bot")
     ring.add_argument("--task")
+    ring.add_argument(
+        "--escalate-after",
+        type=int,
+        default=0,
+        help="seconds to wait as a notification before the full alarm; 0 rings now",
+    )
 
     wait = sub.add_parser("wait", help="block until the phone answers")
     wait.add_argument("--id", required=True)

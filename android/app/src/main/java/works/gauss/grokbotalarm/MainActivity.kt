@@ -28,11 +28,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
@@ -40,8 +40,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,6 +54,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
@@ -64,7 +67,9 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission(),
     ) {
         tick.intValue++
-        if (Permissions.notificationsGranted(this)) ListenService.start(this)
+        if (Permissions.notificationsGranted(this) && Prefs(this).agents().isNotEmpty()) {
+            ListenService.start(this)
+        }
     }
 
     internal fun askNotifications() {
@@ -78,11 +83,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val prefs = Prefs(this)
-        prefs.ensureSecret()
-        ListenState.replacePending(prefs.pending())
+        prefs.migrate()
+        ListenState.reload(prefs)
         setContent {
             AlarmTheme {
-                SetupScreen(tick.intValue)
+                Root(tick.intValue)
             }
         }
     }
@@ -90,58 +95,214 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         tick.intValue++
-        when {
-            Permissions.notificationsGranted(this) -> ListenService.start(this)
-            !askedNotifications && Build.VERSION.SDK_INT >= 33 -> {
-                askedNotifications = true
-                requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
-            }
+        val prefs = Prefs(this)
+        ListenState.reload(prefs)
+        if (Permissions.notificationsGranted(this) && prefs.agents().isNotEmpty()) {
+            ListenService.start(this)
+        } else if (!askedNotifications && Build.VERSION.SDK_INT >= 33) {
+            askedNotifications = true
+            requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 }
 
 @Composable
-private fun SetupScreen(tick: Int) {
+private fun Root(tick: Int) {
+    var screen by rememberSaveable { mutableStateOf("home") }
+    var selected by rememberSaveable { mutableStateOf("") }
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(tick) {
+        now = System.currentTimeMillis()
+        while (true) {
+            delay(30_000)
+            now = System.currentTimeMillis()
+        }
+    }
+    when (screen) {
+        "add" -> AddScreen(onBack = { screen = "home" }, onAdded = {
+            selected = it
+            screen = "ai"
+        })
+        "ai" -> AgentScreen(
+            agentId = selected,
+            now = now,
+            onBack = { screen = "home" },
+        )
+        "phone" -> PhoneScreen(tick, onBack = { screen = "home" })
+        else -> HomeScreen(now, onAdd = { screen = "add" }, onOpen = {
+            selected = it
+            screen = "ai"
+        }, onPhone = { screen = "phone" })
+    }
+}
+
+@Composable
+private fun HomeScreen(now: Long, onAdd: () -> Unit, onOpen: (String) -> Unit, onPhone: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val agents = ListenState.agents.value
+    val tasks = ListenState.tasks.value
+    val listening = ListenState.connected.value
+    val phoneOk = Permissions.notificationsGranted(context) &&
+        Permissions.fullScreenGranted(context) &&
+        Permissions.batteryGranted(context) &&
+        Permissions.dndGranted(context)
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(AlarmPalette.Black)
+            .systemBarsPadding()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 24.dp, vertical = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        StatusRow(listening)
+        Text(
+            stringResource(R.string.ais),
+            color = AlarmPalette.White,
+            fontFamily = AlarmFont,
+            fontWeight = FontWeight.Black,
+            fontSize = 34.sp,
+        )
+        if (agents.isEmpty()) {
+            Text(
+                stringResource(R.string.no_ais),
+                color = AlarmPalette.Mute,
+                fontFamily = AlarmFont,
+                fontSize = 16.sp,
+            )
+        }
+        agents.forEach { agent ->
+            val mine = tasks.filter { it.agentId == agent.id }
+            val waiting = mine.any { it.state == STATE_WAITING }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 76.dp)
+                    .clickable { onOpen(agent.id) }
+                    .padding(vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        agent.name,
+                        color = AlarmPalette.White,
+                        fontFamily = AlarmFont,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 22.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        agoLabel(agent.lastSeen, now, listening),
+                        color = AlarmPalette.Mute,
+                        fontFamily = AlarmFont,
+                        fontSize = 15.sp,
+                    )
+                }
+                if (waiting) {
+                    Text(
+                        stringResource(R.string.waiting),
+                        color = AlarmPalette.Accent,
+                        fontFamily = AlarmFont,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                    )
+                }
+            }
+            HorizontalDivider(color = AlarmPalette.Hairline, thickness = 1.dp)
+        }
+        Spacer(Modifier.height(8.dp))
+        WhiteButton(stringResource(R.string.add), Modifier.fillMaxWidth(), onAdd)
+        Spacer(Modifier.height(12.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 56.dp)
+                .clickable(onClick = onPhone),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                stringResource(R.string.phone),
+                modifier = Modifier.weight(1f),
+                color = AlarmPalette.White,
+                fontFamily = AlarmFont,
+                fontWeight = FontWeight.Bold,
+                fontSize = 18.sp,
+            )
+            Text(
+                stringResource(if (phoneOk) R.string.on else R.string.needed),
+                color = if (phoneOk) AlarmPalette.Accent else AlarmPalette.White,
+                fontFamily = AlarmFont,
+                fontWeight = FontWeight.Bold,
+                fontSize = 16.sp,
+            )
+        }
+    }
+}
+
+@Composable
+private fun AddScreen(onBack: () -> Unit, onAdded: (String) -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var name by rememberSaveable { mutableStateOf("") }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(AlarmPalette.Black)
+            .systemBarsPadding()
+            .padding(horizontal = 24.dp, vertical = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        BackRow(onBack)
+        Text(
+            stringResource(R.string.add),
+            color = AlarmPalette.White,
+            fontFamily = AlarmFont,
+            fontWeight = FontWeight.Black,
+            fontSize = 34.sp,
+        )
+        Text(
+            stringResource(R.string.add_hint),
+            color = AlarmPalette.Mute,
+            fontFamily = AlarmFont,
+            fontSize = 16.sp,
+        )
+        OutlinedTextField(
+            value = name,
+            onValueChange = { name = it.take(40) },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            textStyle = TextStyle(color = AlarmPalette.White, fontFamily = AlarmFont, fontSize = 22.sp),
+            label = { Text(stringResource(R.string.name), fontFamily = AlarmFont) },
+            colors = fieldColors(),
+        )
+        WhiteButton(stringResource(R.string.add), Modifier.fillMaxWidth()) {
+            val prefs = Prefs(context)
+            val agent = prefs.addAgent(name)
+            ListenState.reload(prefs)
+            if (Permissions.notificationsGranted(context)) ListenService.start(context)
+            onAdded(agent.id)
+        }
+    }
+}
+
+@Composable
+private fun AgentScreen(agentId: String, now: Long, onBack: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val prefs = remember { Prefs(context) }
-    var secret by remember { mutableStateOf(prefs.secret) }
-    var server by remember { mutableStateOf(prefs.server) }
     var note by remember { mutableStateOf("") }
-    val notifOk = remember(tick) { Permissions.notificationsGranted(context) }
-    val screenOk = remember(tick) { Permissions.fullScreenGranted(context) }
-    val batteryOk = remember(tick) { Permissions.batteryGranted(context) }
-    val dndOk = remember(tick) { Permissions.dndGranted(context) }
-    val connected = ListenState.connected.value
-    val pending = ListenState.pending.value
-    LaunchedEffect(tick) {
-        ListenState.replacePending(prefs.pending())
-    }
+    val agent = ListenState.agents.value.find { it.id == agentId }
+    val tasks = ListenState.tasks.value.filter { it.agentId == agentId }.sortedByDescending { it.registeredAt }
+    val listening = ListenState.connected.value
     LaunchedEffect(note) {
         if (note.isNotEmpty()) {
             delay(1600)
             note = ""
         }
     }
-
-    fun save(): Boolean {
-        val nextSecret = secret.trim()
-        val nextServer = server.trim().trimEnd('/')
-        if (!validSecret(nextSecret)) {
-            note = context.getString(R.string.secret_short)
-            return false
-        }
-        if (!validServer(nextServer)) {
-            note = context.getString(R.string.bad_url)
-            return false
-        }
-        prefs.savePairing(nextServer, nextSecret)
-        secret = prefs.secret
-        server = prefs.server
-        ListenState.replacePending(prefs.pending())
-        if (Permissions.notificationsGranted(context)) ListenService.start(context)
-        return true
+    if (agent == null) {
+        LaunchedEffect(Unit) { onBack() }
+        return
     }
-
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -151,110 +312,198 @@ private fun SetupScreen(tick: Int) {
             .padding(horizontal = 24.dp, vertical = 28.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            val status = stringResource(if (connected) R.string.ears_on else R.string.not_listening)
-            val statusCd = stringResource(if (connected) R.string.cd_status_on else R.string.cd_status_off)
-            Box(
-                modifier = Modifier
-                    .size(10.dp)
-                    .clip(CircleShape)
-                    .background(if (connected) AlarmPalette.Accent else AlarmPalette.Mute)
-                    .semantics { contentDescription = statusCd },
-            )
-            Spacer(Modifier.width(10.dp))
+        BackRow(onBack)
+        Text(
+            agent.name,
+            color = AlarmPalette.White,
+            fontFamily = AlarmFont,
+            fontWeight = FontWeight.Black,
+            fontSize = 34.sp,
+        )
+        Text(
+            agoLabel(agent.lastSeen, now, listening),
+            color = AlarmPalette.Mute,
+            fontFamily = AlarmFont,
+            fontSize = 16.sp,
+        )
+        val line = setupLine(agent.name, agent.secret, prefs.server)
+        SelectionContainer {
             Text(
-                status,
-                color = if (connected) AlarmPalette.Accent else AlarmPalette.Mute,
-                fontFamily = AlarmFont,
-                fontWeight = FontWeight.Bold,
-                fontSize = 16.sp,
+                line,
+                color = AlarmPalette.Mute,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
             )
         }
-
-        if (pending.isEmpty()) {
+        WhiteButton(stringResource(R.string.copy), Modifier.fillMaxWidth()) {
+            val clip = context.getSystemService(ClipboardManager::class.java)
+            clip.setPrimaryClip(ClipData.newPlainText("grokbot-alarm", line))
+            note = context.getString(R.string.copied)
+        }
+        Text(
+            if (note.isNotEmpty()) note else stringResource(R.string.paste_hint),
+            color = if (note.isNotEmpty()) AlarmPalette.White else AlarmPalette.Mute,
+            fontFamily = AlarmFont,
+            fontWeight = if (note.isNotEmpty()) FontWeight.Bold else FontWeight.Normal,
+            fontSize = 15.sp,
+        )
+        if (tasks.isEmpty()) {
             Text(
-                stringResource(R.string.no_wakes),
+                stringResource(R.string.no_tasks),
                 color = AlarmPalette.Mute,
                 fontFamily = AlarmFont,
                 fontSize = 16.sp,
             )
-        } else {
-            pending.forEach { wake ->
-                Column {
+        }
+        tasks.forEach { task ->
+            val state = when (task.state) {
+                STATE_WAITING -> stringResource(R.string.waiting)
+                STATE_DONE -> stringResource(R.string.done)
+                else -> stringResource(R.string.working)
+            }
+            val stateColor = when (task.state) {
+                STATE_WAITING -> AlarmPalette.Accent
+                STATE_DONE -> AlarmPalette.Mute
+                else -> AlarmPalette.White
+            }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 72.dp)
+                    .clickable(enabled = task.state == STATE_WAITING) {
+                        context.startActivity(
+                            Intent(context, AlarmActivity::class.java)
+                                .putExtra(AlarmActivity.EXTRA, task.toPayload(agent.name).toJson())
+                                .putExtra(AlarmActivity.EXTRA_QUIET, !task.ringing),
+                        )
+                    }
+                    .padding(vertical = 8.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        wake.bot,
+                        task.bot,
+                        modifier = Modifier.weight(1f),
                         color = AlarmPalette.White,
                         fontFamily = AlarmFont,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 20.sp,
+                        fontSize = 18.sp,
                         maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        wake.task,
-                        color = AlarmPalette.Mute,
+                        state,
+                        color = stateColor,
+                        fontFamily = AlarmFont,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                    )
+                }
+                Text(
+                    task.task,
+                    color = AlarmPalette.Mute,
+                    fontFamily = AlarmFont,
+                    fontSize = 15.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (task.question.isNotBlank() && task.state == STATE_WAITING) {
+                    Text(
+                        task.question,
+                        color = AlarmPalette.White,
                         fontFamily = AlarmFont,
                         fontSize = 16.sp,
                         maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
+                Text(
+                    agoLabel(task.registeredAt, now, listening = false),
+                    color = AlarmPalette.Mute,
+                    fontFamily = AlarmFont,
+                    fontSize = 13.sp,
+                )
             }
+            HorizontalDivider(color = AlarmPalette.Hairline, thickness = 1.dp)
         }
-
-        OutlinedTextField(
-            value = secret,
-            onValueChange = { secret = it.filterNot { ch -> ch.isWhitespace() } },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            textStyle = TextStyle(
-                color = AlarmPalette.White,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 16.sp,
-            ),
-            label = { Text(stringResource(R.string.secret), fontFamily = AlarmFont) },
-            colors = fieldColors(),
+        Spacer(Modifier.height(12.dp))
+        Text(
+            stringResource(R.string.drop),
+            modifier = Modifier.clickable {
+                prefs.dropAgent(agent.id)
+                ListenState.reload(prefs)
+                if (prefs.agents().isNotEmpty() && Permissions.notificationsGranted(context)) {
+                    ListenService.start(context)
+                }
+                onBack()
+            },
+            color = AlarmPalette.Mute,
+            fontFamily = AlarmFont,
+            fontWeight = FontWeight.Bold,
+            fontSize = 16.sp,
         )
+    }
+}
+
+@Composable
+private fun PhoneScreen(tick: Int, onBack: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val prefs = remember { Prefs(context) }
+    var server by remember { mutableStateOf(prefs.server) }
+    var note by remember { mutableStateOf("") }
+    val notifOk = remember(tick) { Permissions.notificationsGranted(context) }
+    val screenOk = remember(tick) { Permissions.fullScreenGranted(context) }
+    val batteryOk = remember(tick) { Permissions.batteryGranted(context) }
+    val dndOk = remember(tick) { Permissions.dndGranted(context) }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(AlarmPalette.Black)
+            .systemBarsPadding()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 24.dp, vertical = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        BackRow(onBack)
+        Text(
+            stringResource(R.string.phone),
+            color = AlarmPalette.White,
+            fontFamily = AlarmFont,
+            fontWeight = FontWeight.Black,
+            fontSize = 34.sp,
+        )
+        if (note.isNotEmpty()) {
+            Text(note, color = AlarmPalette.White, fontFamily = AlarmFont, fontWeight = FontWeight.Bold)
+        }
         OutlinedTextField(
             value = server,
             onValueChange = { server = it },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
-            textStyle = TextStyle(
-                color = AlarmPalette.White,
-                fontFamily = AlarmFont,
-                fontSize = 18.sp,
-            ),
+            textStyle = TextStyle(color = AlarmPalette.White, fontFamily = AlarmFont, fontSize = 18.sp),
             label = { Text(stringResource(R.string.server), fontFamily = AlarmFont) },
             colors = fieldColors(),
         )
-        WhiteButton(stringResource(R.string.copy), Modifier.fillMaxWidth()) {
-            if (save()) {
-                val line = setupLine(prefs.secret, prefs.server)
-                val clip = context.getSystemService(ClipboardManager::class.java)
-                clip.setPrimaryClip(ClipData.newPlainText("grokbot-alarm", line))
-                note = context.getString(R.string.copied)
-            }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                if (note.isNotEmpty()) note else stringResource(R.string.paste_hint),
-                modifier = Modifier.weight(1f),
-                color = if (note.isNotEmpty()) AlarmPalette.White else AlarmPalette.Mute,
-                fontFamily = AlarmFont,
-                fontWeight = if (note.isNotEmpty()) FontWeight.Bold else FontWeight.Normal,
-                fontSize = 15.sp,
-            )
-            Text(
-                stringResource(R.string.save),
-                modifier = Modifier.clickable {
-                    if (save()) note = context.getString(R.string.saved)
-                },
-                color = AlarmPalette.White,
-                fontFamily = AlarmFont,
-                fontWeight = FontWeight.Bold,
-                fontSize = 16.sp,
-            )
-        }
-
+        Text(
+            stringResource(R.string.save),
+            modifier = Modifier.clickable {
+                val next = server.trim().trimEnd('/')
+                if (!validServer(next)) {
+                    note = context.getString(R.string.bad_url)
+                } else {
+                    prefs.server = next
+                    server = prefs.server
+                    note = context.getString(R.string.saved)
+                    if (prefs.agents().isNotEmpty() && Permissions.notificationsGranted(context)) {
+                        ListenService.start(context)
+                    }
+                }
+            },
+            color = AlarmPalette.White,
+            fontFamily = AlarmFont,
+            fontWeight = FontWeight.Bold,
+            fontSize = 18.sp,
+        )
         Gate(stringResource(R.string.alerts), stringResource(R.string.alerts_hint), notifOk) {
             if (!notifOk && context is MainActivity) context.askNotifications()
             else Permissions.openNotifications(context)
@@ -268,7 +517,6 @@ private fun SetupScreen(tick: Int) {
         Gate(stringResource(R.string.dnd), stringResource(R.string.dnd_hint), dndOk) {
             Permissions.openDnd(context)
         }
-
         Spacer(Modifier.height(8.dp))
         WhiteButton(stringResource(R.string.test), Modifier.fillMaxWidth()) {
             val payload = AlarmPayload(
@@ -282,11 +530,45 @@ private fun SetupScreen(tick: Int) {
                 test = true,
             )
             context.startActivity(
-                Intent(context, AlarmActivity::class.java)
-                    .putExtra(AlarmActivity.EXTRA, payload.toJson()),
+                Intent(context, AlarmActivity::class.java).putExtra(AlarmActivity.EXTRA, payload.toJson()),
             )
         }
     }
+}
+
+@Composable
+private fun StatusRow(listening: Boolean) {
+    val status = stringResource(if (listening) R.string.ears_on else R.string.not_listening)
+    val statusCd = stringResource(if (listening) R.string.cd_status_on else R.string.cd_status_off)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .size(10.dp)
+                .clip(CircleShape)
+                .background(if (listening) AlarmPalette.Accent else AlarmPalette.Mute)
+                .semantics { contentDescription = statusCd },
+        )
+        Spacer(Modifier.width(10.dp))
+        Text(
+            status,
+            color = if (listening) AlarmPalette.Accent else AlarmPalette.Mute,
+            fontFamily = AlarmFont,
+            fontWeight = FontWeight.Bold,
+            fontSize = 16.sp,
+        )
+    }
+}
+
+@Composable
+private fun BackRow(onBack: () -> Unit) {
+    Text(
+        stringResource(R.string.ais),
+        modifier = Modifier.clickable(onClick = onBack),
+        color = AlarmPalette.Accent,
+        fontFamily = AlarmFont,
+        fontWeight = FontWeight.Bold,
+        fontSize = 16.sp,
+    )
 }
 
 @Composable
@@ -337,12 +619,7 @@ private fun Gate(label: String, hint: String, ok: Boolean, onClick: () -> Unit) 
                 fontSize = 16.sp,
             )
         }
-        Text(
-            hint,
-            color = AlarmPalette.Mute,
-            fontFamily = AlarmFont,
-            fontSize = 15.sp,
-        )
+        Text(hint, color = AlarmPalette.Mute, fontFamily = AlarmFont, fontSize = 15.sp)
         Spacer(Modifier.height(10.dp))
         HorizontalDivider(color = AlarmPalette.Hairline, thickness = 1.dp)
     }
@@ -360,7 +637,3 @@ private fun fieldColors() = OutlinedTextFieldDefaults.colors(
     focusedContainerColor = AlarmPalette.Black,
     unfocusedContainerColor = AlarmPalette.Black,
 )
-
-private fun setupLine(secret: String, server: String): String {
-    return "Set up grokbot-alarm with secret $secret on server $server"
-}

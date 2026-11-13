@@ -15,21 +15,23 @@ The phone rings until they answer one real decision about the task. The alarm th
 
 The phone app and this machine share one secret. Config lives in `~/.config/grokbot-alarm/config.json` (or `$GROKBOT_ALARM_HOME`).
 
-Pairing is a sentence the user pastes from the phone. The phone's Copy button puts exactly one line on the clipboard:
+You are one Connected AI. The phone groups your tasks under the name in the setup line. Pairing is a sentence the user pastes from that AI's screen:
 
 ```text
-Set up grokbot-alarm with secret SECRET on server SERVER
+Set up grokbot-alarm with secret SECRET on server SERVER as NAME
 ```
 
-When you see that line, in that message or inside a longer one, run init immediately. Do it even if a config file already exists. Do not ask them to retype the secret, and do not invent one.
+When you see that line, run init immediately, even if a config already exists. Do not ask them to retype the secret, and do not invent one.
 
 ```bash
-python3 cli/grokbot_alarm.py init --secret SECRET --server SERVER
+python3 cli/grokbot_alarm.py init --secret SECRET --server SERVER --agent "NAME"
 ```
 
-`SECRET` is the single token after `secret`. `SERVER` is the URL after `server` (usually `https://ntfy.sh`). Quote both. Run the CLI from the `grokbot-alarm` repo, or with an absolute path to `cli/grokbot_alarm.py`. `python3` and the standard library are enough.
+`SECRET` is the token after `secret`. `SERVER` is the URL after `server`. `NAME` is the rest of the line after ` as `. Quote all three. An older line with no ` as NAME` is still valid: omit `--agent`.
 
-If the file is missing and they have not pasted that line, tell them to open Alarm on the phone, tap Copy, and paste the line here. Then stop.
+Run the CLI from the `grokbot-alarm` repo, or with an absolute path to `cli/grokbot_alarm.py`. `python3` and the standard library are enough.
+
+If there is no config and they have not pasted that line, tell them to open Alarm, tap Add, name this AI, tap Copy, and paste the line here. Then stop.
 
 ## When the user asks to be woken
 
@@ -46,7 +48,11 @@ Stdout is only the alarm id. Save it. Stderr is not the id.
 
 Register is silent. It does not ring.
 
-Then do the work. When the task has reached a real decision only the user should make, ring once:
+Then do the work. The phone shows this task as Working.
+
+When you need a human decision, ask. Two speeds:
+
+- They might still be at the keyboard. Post a needs-you first. If they ignore it, the phone escalates to the full alarm:
 
 ```bash
 python3 cli/grokbot_alarm.py ring \
@@ -55,10 +61,13 @@ python3 cli/grokbot_alarm.py ring \
   --option "CONCRETE_CHOICE_A" \
   --option "CONCRETE_CHOICE_B" \
   --next "SHORT_NEXT_INSTRUCTION" \
-  --next "ANOTHER_NEXT_INSTRUCTION"
+  --next "ANOTHER_NEXT_INSTRUCTION" \
+  --escalate-after 120
 ```
 
-You need 2 to 6 `--option` values and may pass up to 6 `--next` values. Write the question, options, and next instructions in the user's language. The phone shows them unchanged.
+- They asked to be woken, or the decision cannot wait. Ring now. Omit `--escalate-after`.
+
+You need 2 to 6 `--option` values and may pass up to 6 `--next` values. Write the question, options, and next instructions in the user's language. The phone shows them unchanged. `--escalate-after` is seconds. Do not send a second ring for the same id while you are waiting.
 
 Then wait:
 

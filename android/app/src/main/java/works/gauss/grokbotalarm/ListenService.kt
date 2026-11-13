@@ -20,13 +20,16 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.util.ArrayDeque
+import kotlin.math.abs
 
 object ListenState {
     val connected = mutableStateOf(false)
-    val pending = mutableStateOf<List<PendingWake>>(emptyList())
+    val agents = mutableStateOf<List<Agent>>(emptyList())
+    val tasks = mutableStateOf<List<TaskItem>>(emptyList())
 
-    fun replacePending(items: List<PendingWake>) {
-        pending.value = items
+    fun reload(prefs: Prefs) {
+        agents.value = prefs.agents()
+        tasks.value = prefs.tasks()
     }
 }
 
@@ -35,6 +38,7 @@ class ListenService : Service() {
     private val main = Handler(Looper.getMainLooper())
     private val gate = Any()
     private val queue = ArrayDeque<AlarmPayload>()
+    private val escalations = HashMap<String, Runnable>()
     private var active: AlarmPayload? = null
     private var restored = false
 
@@ -49,6 +53,8 @@ class ListenService : Service() {
         generation++
         connection?.disconnect()
         loop?.interrupt()
+        escalations.values.forEach { main.removeCallbacks(it) }
+        escalations.clear()
         ListenState.connected.value = false
         super.onDestroy()
     }
@@ -67,7 +73,7 @@ class ListenService : Service() {
         }
         if (!restored) {
             restored = true
-            restoreOpen()
+            restore()
         }
         when (intent?.action) {
             ACTION_ANSWERED -> intent.getStringExtra(EXTRA_ID)?.let { onAnswered(it) }
@@ -78,7 +84,7 @@ class ListenService : Service() {
     }
 
     private fun ensureLoop() {
-        val stamp = prefs.server + "|" + prefs.secret
+        val stamp = prefs.server + "|" + prefs.agents().joinToString(",") { it.secret }
         if (loop?.isAlive == true && stamp == configStamp) return
         configStamp = stamp
         val gen = ++generation
@@ -114,21 +120,22 @@ class ListenService : Service() {
     }
 
     private fun readStream(gen: Int) {
-        val secret = prefs.secret
+        val agents = prefs.agents()
         val server = prefs.server
-        if (!validSecret(secret) || !validServer(server)) {
-            ListenState.connected.value = false
+        if (agents.isEmpty() || !validServer(server)) {
+            main.post { if (gen == generation) ListenState.connected.value = false }
             Thread.sleep(5_000)
             return
         }
+        val topics = agents.joinToString(",") { inboxTopic(it.secret) }
         val since = URLEncoder.encode(prefs.lastId.ifBlank { "12h" }, "UTF-8")
-        val url = URL(server.trimEnd('/') + "/" + inboxTopic(secret) + "/json?since=" + since)
+        val url = URL(server.trimEnd('/') + "/" + topics + "/json?since=" + since)
         val conn = url.openConnection() as HttpURLConnection
         conn.connectTimeout = 15_000
         conn.readTimeout = 120_000
         conn.setRequestProperty("Accept", "application/x-ndjson")
         conn.setRequestProperty("Accept-Encoding", "identity")
-        conn.setRequestProperty("User-Agent", "grokbot-alarm/0.1")
+        conn.setRequestProperty("User-Agent", "grokbot-alarm/0.2")
         connection = conn
         conn.connect()
         main.post {
@@ -153,60 +160,116 @@ class ListenService : Service() {
         val event = obj.optString("event")
         if (event == "open" || event == "keepalive") return
         if (event.isNotEmpty() && event != "message") return
-        if (event != "message") return
         val id = obj.optString("id")
+        val topic = obj.optString("topic")
         val body = obj.optString("message")
         if (body.isEmpty()) {
             if (id.isNotEmpty()) prefs.lastId = id
             return
         }
-        // Advance the cursor only after the message is applied, so a crash retries it.
         main.post {
-            dispatch(body)
+            dispatch(topic, body)
             if (id.isNotEmpty()) prefs.lastId = id
         }
     }
 
-    private fun dispatch(body: String) {
+    private fun dispatch(topic: String, body: String) {
+        val agent = prefs.agentForInbox(topic) ?: return
+        prefs.touch(agent.id)
         when (val incoming = parseIncoming(body)) {
-            is Incoming.Register -> {
-                prefs.addPending(incoming.wake)
-                ListenState.replacePending(prefs.pending())
-            }
-            is Incoming.Alarm -> handleAlarm(incoming.payload)
+            is Incoming.Register -> prefs.noteWorking(agent.id, incoming.id, incoming.bot, incoming.task)
+            is Incoming.Needs -> onNeeds(agent, incoming)
+            is Incoming.Alarm -> onAlarm(agent, incoming.payload.copy(agent = agent.name))
             null -> Unit
         }
+        ListenState.reload(prefs)
+    }
+
+    private fun onNeeds(agent: Agent, incoming: Incoming.Needs) {
+        if (prefs.isAnswered(incoming.payload.id)) return
+        val payload = incoming.payload.copy(agent = agent.name)
+        if (incoming.escalateAfterSec <= 0) {
+            onAlarm(agent, payload)
+            return
+        }
+        val at = System.currentTimeMillis() + incoming.escalateAfterSec * 1000L
+        prefs.noteWaiting(agent.id, payload, escalateAt = at, ringing = false)
+        notifyNeeds(agent, payload)
+        schedule(payload.id, at)
+        ListenState.reload(prefs)
+    }
+
+    private fun onAlarm(agent: Agent, payload: AlarmPayload) {
+        if (prefs.isAnswered(payload.id)) return
+        cancelEscalation(payload.id)
+        cancelNeeds(payload.id)
+        prefs.noteWaiting(agent.id, payload, escalateAt = 0, ringing = true)
+        handleAlarm(payload)
+        ListenState.reload(prefs)
+    }
+
+    private fun schedule(id: String, at: Long) {
+        cancelEscalation(id)
+        val delay = (at - System.currentTimeMillis()).coerceAtLeast(0)
+        val run = Runnable {
+            escalations.remove(id)
+            escalate(id)
+        }
+        escalations[id] = run
+        main.postDelayed(run, delay)
+    }
+
+    private fun cancelEscalation(id: String) {
+        escalations.remove(id)?.let { main.removeCallbacks(it) }
+    }
+
+    private fun escalate(id: String) {
+        val task = prefs.tasks().find { it.id == id } ?: return
+        if (task.state != STATE_WAITING || task.ringing || prefs.isAnswered(id)) return
+        val name = prefs.agent(task.agentId)?.name.orEmpty()
+        val payload = task.toPayload(name)
+        cancelNeeds(id)
+        prefs.noteWaiting(task.agentId, payload, escalateAt = 0, ringing = true)
+        handleAlarm(payload)
+        ListenState.reload(prefs)
+    }
+
+    private fun restore() {
+        val now = System.currentTimeMillis()
+        val ringing = prefs.tasks().filter { it.state == STATE_WAITING && it.ringing && !prefs.isAnswered(it.id) }
+        synchronized(gate) {
+            ringing.forEach { task ->
+                val payload = task.toPayload(prefs.agent(task.agentId)?.name.orEmpty())
+                if (active == null) {
+                    active = payload
+                    showActive()
+                } else {
+                    queue.add(payload)
+                }
+            }
+        }
+        prefs.tasks().filter { it.state == STATE_WAITING && !it.ringing && it.escalateAt > 0 }.forEach { task ->
+            if (task.escalateAt <= now) escalate(task.id) else schedule(task.id, task.escalateAt)
+        }
+        ListenState.reload(prefs)
     }
 
     private fun handleAlarm(payload: AlarmPayload) {
         synchronized(gate) {
             if (prefs.isAnswered(payload.id)) return
             if (active?.id == payload.id || queue.any { it.id == payload.id }) return
-            prefs.removePending(payload.id)
-            ListenState.replacePending(prefs.pending())
             if (active == null) {
                 active = payload
-                persistOpen()
                 showActive()
             } else {
                 queue.add(payload)
-                persistOpen()
             }
         }
     }
 
-    private fun restoreOpen() {
-        synchronized(gate) {
-            val open = prefs.openAlarms().filter { !prefs.isAnswered(it.id) }
-            if (open.isEmpty()) return
-            active = open.first()
-            queue.clear()
-            queue.addAll(open.drop(1))
-            showActive()
-        }
-    }
-
     private fun onAnswered(id: String) {
+        cancelEscalation(id)
+        cancelNeeds(id)
         synchronized(gate) {
             queue.removeAll { it.id == id }
             val wasActive = active?.id == id
@@ -215,24 +278,16 @@ class ListenService : Service() {
                 getSystemService(NotificationManager::class.java).cancel(ALARM_ID)
                 active = if (queue.isEmpty()) null else queue.removeFirst()
             }
-            persistOpen()
-            prefs.markAnswered(id)
+            prefs.markDone(id)
+            ListenState.reload(prefs)
             if (wasActive && active != null) showActive()
         }
-    }
-
-    private fun persistOpen() {
-        val items = ArrayList<AlarmPayload>()
-        active?.let { items.add(it) }
-        items.addAll(queue)
-        prefs.setOpen(items)
     }
 
     private fun showActive() {
         val payload = active ?: return
         Ringer.start(this, payload.id)
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.notify(ALARM_ID, alarmNotification(payload))
+        getSystemService(NotificationManager::class.java).notify(ALARM_ID, alarmNotification(payload))
         val launch = Intent(this, AlarmActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
             putExtra(AlarmActivity.EXTRA, payload.toJson())
@@ -243,6 +298,36 @@ class ListenService : Service() {
             Log.w(TAG, "full screen activity blocked; notification remains", e)
         }
     }
+
+    private fun notifyNeeds(agent: Agent, payload: AlarmPayload) {
+        val launch = Intent(this, AlarmActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            putExtra(AlarmActivity.EXTRA, payload.toJson())
+            putExtra(AlarmActivity.EXTRA_QUIET, true)
+        }
+        val pi = PendingIntent.getActivity(
+            this,
+            payload.id.hashCode(),
+            launch,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val notification = NotificationCompat.Builder(this, CHANNEL_NEEDS)
+            .setSmallIcon(R.drawable.ic_stat_bell)
+            .setContentTitle(agent.name)
+            .setContentText(payload.question)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(payload.question))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(pi)
+            .build()
+        getSystemService(NotificationManager::class.java).notify(needsId(payload.id), notification)
+    }
+
+    private fun cancelNeeds(id: String) {
+        getSystemService(NotificationManager::class.java).cancel(needsId(id))
+    }
+
+    private fun needsId(id: String) = 4000 + abs(id.hashCode() % 20000)
 
     private fun listeningNotification(): Notification {
         val open = PendingIntent.getActivity(
@@ -273,10 +358,11 @@ class ListenService : Service() {
             launch,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        val title = payload.agent.ifBlank { payload.bot }
         return NotificationCompat.Builder(this, CHANNEL_ALARM)
             .setSmallIcon(R.drawable.ic_stat_bell)
-            .setColor(0xFFFFB020.toInt())
-            .setContentTitle(payload.bot)
+            .setColor(0xFF1D9BF0.toInt())
+            .setContentTitle(title)
             .setContentText(payload.task)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setPriority(NotificationCompat.PRIORITY_MAX)
@@ -295,6 +381,7 @@ class ListenService : Service() {
         private const val LISTEN_ID = 1001
         private const val ALARM_ID = 2001
         const val CHANNEL_LISTEN = "listen"
+        const val CHANNEL_NEEDS = "needs"
         const val CHANNEL_ALARM = "alarm"
 
         fun start(context: Context) {
@@ -310,7 +397,7 @@ class ListenService : Service() {
                 context.startService(intent)
             } catch (e: Exception) {
                 Log.w(TAG, "signal $action", e)
-                if (action == ACTION_ANSWERED) Prefs(context).markAnswered(id)
+                if (action == ACTION_ANSWERED) Prefs(context).markDone(id)
             }
         }
 
@@ -322,6 +409,11 @@ class ListenService : Service() {
                 NotificationManager.IMPORTANCE_LOW,
             )
             listen.setShowBadge(false)
+            val needs = NotificationChannel(
+                CHANNEL_NEEDS,
+                context.getString(R.string.needs_channel),
+                NotificationManager.IMPORTANCE_HIGH,
+            )
             val alarm = NotificationChannel(
                 CHANNEL_ALARM,
                 context.getString(R.string.listen_title),
@@ -335,6 +427,7 @@ class ListenService : Service() {
             } catch (_: Exception) {
             }
             manager.createNotificationChannel(listen)
+            manager.createNotificationChannel(needs)
             manager.createNotificationChannel(alarm)
         }
     }

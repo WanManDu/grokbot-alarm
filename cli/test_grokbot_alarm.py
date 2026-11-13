@@ -191,6 +191,37 @@ class CliTest(unittest.TestCase):
         self.assertEqual(ring.returncode, 1)
         self.assertIn("2 to 6", ring.stderr)
 
+    def test_agent_name_and_escalation(self) -> None:
+        init = self.run_cli("init", "--server", self.base, "--agent", "coder")
+        self.assertEqual(init.returncode, 0, init.stderr)
+        paired = json.loads(init.stdout)
+        self.assertEqual(paired["agent"], "coder")
+        registered = self.run_cli("register", "--bot", "coder", "--task", "Ship the flag")
+        alarm_id = registered.stdout.strip()
+        with LOCK:
+            body = json.loads(STORE[paired["inbox"]][-1])
+        self.assertEqual(body["agent"], "coder")
+        self.assertEqual(body["type"], "register")
+        ring = self.run_cli(
+            "ring",
+            "--id",
+            alarm_id,
+            "--question",
+            "Flag it?",
+            "--option",
+            "Yes",
+            "--option",
+            "No",
+            "--escalate-after",
+            "90",
+        )
+        self.assertEqual(ring.returncode, 0, ring.stderr)
+        with LOCK:
+            needs = json.loads(STORE[paired["inbox"]][-1])
+        self.assertEqual(needs["type"], "needs")
+        self.assertEqual(needs["escalateAfter"], 90)
+        self.assertEqual(needs["agent"], "coder")
+
 
 if __name__ == "__main__":
     unittest.main()
