@@ -150,7 +150,7 @@ python3 cli/grokbot_alarm.py ring --id "$ID" \
 python3 cli/grokbot_alarm.py wait --id "$ID" --timeout 7200
 ```
 
-6. Lock the phone and turn the screen off. It should wake, show the bot name and the task, and ring and vibrate, getting louder, including while the ringer is silent.
+6. Lock the phone and turn the screen off. It should wake and ring, getting louder, including while the ringer is silent. On screen, in this order: a short wake-up line, the bot name, the task, then the question in large white type, then the answer buttons. If you only see the buttons, the build is wrong.
 7. Tap one answer. The sound stops. Tap a next instruction, or type a short one and tap the send icon.
 8. The CLI prints one JSON line with `choice` and `instruction`. A bot following `skill/SKILL.md` applies the choice and starts the instruction without asking again.
 

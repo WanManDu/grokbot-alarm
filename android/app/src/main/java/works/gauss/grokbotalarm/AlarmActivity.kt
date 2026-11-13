@@ -9,11 +9,11 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -37,10 +37,11 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -49,18 +50,31 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 import org.json.JSONObject
+
+private val WakeLines = listOf(
+    "Up. The work isn't.",
+    "You dozed. It didn't.",
+    "Eyes open. Decide.",
+    "Nap's over. Pick one.",
+    "Still here. You in?",
+    "Clock's running. Choose.",
+    "Wake up. Ship it.",
+    "Dream later. This is the call.",
+)
 
 class AlarmActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -112,6 +126,8 @@ private fun AlarmScreen(payload: AlarmPayload) {
     var draft by rememberSaveable { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf(false) }
+    val question = payload.question.ifBlank { "…" }
+    val questionCd = stringResource(R.string.cd_question)
 
     fun silence() {
         Ringer.stop(payload.id)
@@ -121,7 +137,8 @@ private fun AlarmScreen(payload: AlarmPayload) {
     }
 
     fun send(instruction: String) {
-        val text = instruction.trim()
+        // Typos, emoji, any language. The only quiet no-op is a blank field.
+        val text = instruction.trim().take(1500)
         if (text.isEmpty() || sending) return
         if (payload.test) {
             (context as? Activity)?.finish()
@@ -158,62 +175,54 @@ private fun AlarmScreen(payload: AlarmPayload) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .background(AlarmPalette.Black)
             .systemBarsPadding()
             .imePadding()
             .verticalScroll(rememberScrollState())
-            .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+            .padding(horizontal = 24.dp, vertical = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
         if (step == 1) {
-            val pulse = rememberInfiniteTransition(label = "bell")
-            val scale by pulse.animateFloat(
-                initialValue = 1f,
-                targetValue = 1.15f,
-                animationSpec = infiniteRepeatable(tween(500), RepeatMode.Reverse),
-                label = "bell-scale",
-            )
-            Icon(
-                painterResource(R.drawable.ic_stat_bell),
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier
-                    .size(72.dp)
-                    .scale(scale)
-                    .align(Alignment.CenterHorizontally),
-            )
+            WakeLine()
         } else {
-            Icon(
-                painterResource(R.drawable.ic_check),
-                contentDescription = stringResource(R.string.cd_ok),
-                tint = Color(0xFF3DDC97),
-                modifier = Modifier
-                    .size(84.dp)
-                    .align(Alignment.CenterHorizontally),
+            Text(
+                stringResource(R.string.your_move),
+                color = AlarmPalette.Accent,
+                fontFamily = AlarmFont,
+                fontWeight = FontWeight.Bold,
+                fontSize = 16.sp,
             )
         }
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                painterResource(R.drawable.ic_bot),
-                contentDescription = stringResource(R.string.cd_bot),
-                modifier = Modifier.size(28.dp),
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(payload.bot, fontSize = 32.sp, fontWeight = FontWeight.Bold, lineHeight = 36.sp)
-        }
-        Row(verticalAlignment = Alignment.Top) {
-            Icon(
-                painterResource(R.drawable.ic_task),
-                contentDescription = stringResource(R.string.cd_task),
-                modifier = Modifier.size(22.dp).padding(top = 4.dp),
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(payload.task, fontSize = 18.sp, color = Color(0xFFA9A49A), lineHeight = 24.sp)
-        }
+        Text(
+            text = payload.bot.ifBlank { "—" },
+            color = AlarmPalette.White,
+            fontFamily = AlarmFont,
+            fontWeight = FontWeight.Black,
+            fontSize = 28.sp,
+            lineHeight = 32.sp,
+        )
+        Text(
+            text = payload.task.ifBlank { "—" },
+            color = AlarmPalette.Mute,
+            fontFamily = AlarmFont,
+            fontWeight = FontWeight.Medium,
+            fontSize = 18.sp,
+            lineHeight = 24.sp,
+        )
+        Text(
+            text = question,
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics { contentDescription = "$questionCd. $question" },
+            color = AlarmPalette.White,
+            fontFamily = AlarmFont,
+            fontWeight = FontWeight.Bold,
+            fontSize = 36.sp,
+            lineHeight = 42.sp,
+        )
 
         if (step == 1) {
-            Text(payload.question, fontSize = 28.sp, lineHeight = 34.sp, fontWeight = FontWeight.Medium)
             payload.options.forEach { option ->
                 ChoiceButton(option) {
                     choice = option
@@ -223,49 +232,77 @@ private fun AlarmScreen(payload: AlarmPayload) {
             }
         } else {
             if (choice.isNotEmpty()) {
-                Text(choice, fontSize = 18.sp, color = MaterialTheme.colorScheme.primary)
+                Text(
+                    choice,
+                    color = AlarmPalette.White,
+                    fontFamily = AlarmFont,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 18.sp,
+                )
             }
             payload.next.forEach { option ->
                 ChoiceButton(option, enabled = !sending) { send(option) }
             }
+            if (failed) {
+                Text(
+                    stringResource(R.string.didnt_land),
+                    color = AlarmPalette.White,
+                    fontFamily = AlarmFont,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                )
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
                     value = draft,
-                    onValueChange = { if (it.length <= 140) draft = it.replace("\n", " ") },
+                    onValueChange = { draft = it.take(1500) },
                     modifier = Modifier.weight(1f).heightIn(min = 72.dp),
                     singleLine = true,
-                    textStyle = TextStyle(fontSize = 22.sp),
-                    placeholder = { Text(stringResource(R.string.next_hint), fontSize = 22.sp) },
+                    textStyle = TextStyle(
+                        color = AlarmPalette.White,
+                        fontFamily = AlarmFont,
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 22.sp,
+                    ),
+                    placeholder = {
+                        Text(
+                            stringResource(R.string.next_hint),
+                            color = AlarmPalette.Mute,
+                            fontFamily = AlarmFont,
+                            fontSize = 18.sp,
+                        )
+                    },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                     keyboardActions = KeyboardActions(onSend = { send(draft) }),
                     enabled = !sending,
+                    colors = fieldColors(),
                 )
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(10.dp))
                 Button(
                     onClick = { send(draft) },
                     enabled = draft.isNotBlank() && !sending,
                     modifier = Modifier.size(84.dp),
-                    shape = RoundedCornerShape(20.dp),
+                    shape = RoundedCornerShape(18.dp),
                     contentPadding = PaddingValues(0.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = if (failed) {
-                            MaterialTheme.colorScheme.error
-                        } else {
-                            MaterialTheme.colorScheme.primary
-                        },
+                        containerColor = AlarmPalette.White,
+                        contentColor = AlarmPalette.Black,
+                        disabledContainerColor = AlarmPalette.Hairline,
+                        disabledContentColor = AlarmPalette.Mute,
                     ),
                 ) {
                     if (sending) {
                         CircularProgressIndicator(
-                            modifier = Modifier.size(32.dp),
-                            color = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(28.dp),
+                            color = AlarmPalette.Black,
                             strokeWidth = 3.dp,
                         )
                     } else {
                         Icon(
                             painterResource(R.drawable.ic_send),
                             contentDescription = stringResource(R.string.cd_send),
-                            modifier = Modifier.size(32.dp),
+                            modifier = Modifier.size(28.dp),
+                            tint = Color.Unspecified,
                         )
                     }
                 }
@@ -275,19 +312,64 @@ private fun AlarmScreen(payload: AlarmPayload) {
 }
 
 @Composable
+private fun WakeLine() {
+    var index by remember { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(3400)
+            index = (index + 1) % WakeLines.size
+        }
+    }
+    AnimatedContent(
+        targetState = index,
+        transitionSpec = { fadeIn(tween(420)) togetherWith fadeOut(tween(420)) },
+        label = "wake-line",
+    ) { i ->
+        Text(
+            WakeLines[i],
+            color = AlarmPalette.Accent,
+            fontFamily = AlarmFont,
+            fontWeight = FontWeight.Bold,
+            fontSize = 16.sp,
+        )
+    }
+}
+
+@Composable
 private fun ChoiceButton(label: String, enabled: Boolean = true, onClick: () -> Unit) {
     Button(
         onClick = onClick,
         enabled = enabled,
         modifier = Modifier.fillMaxWidth().heightIn(min = 88.dp),
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(18.dp),
         contentPadding = PaddingValues(horizontal = 18.dp, vertical = 16.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = AlarmPalette.White,
+            contentColor = AlarmPalette.Black,
+            disabledContainerColor = AlarmPalette.Hairline,
+            disabledContentColor = AlarmPalette.Mute,
+        ),
     ) {
         Text(
             text = label,
+            color = AlarmPalette.Black,
+            fontFamily = AlarmFont,
+            fontWeight = FontWeight.Bold,
             fontSize = 24.sp,
             lineHeight = 28.sp,
             textAlign = TextAlign.Center,
         )
     }
 }
+
+@Composable
+private fun fieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedTextColor = AlarmPalette.White,
+    unfocusedTextColor = AlarmPalette.White,
+    disabledTextColor = AlarmPalette.Mute,
+    cursorColor = AlarmPalette.Accent,
+    focusedBorderColor = AlarmPalette.White,
+    unfocusedBorderColor = AlarmPalette.Hairline,
+    focusedContainerColor = AlarmPalette.Black,
+    unfocusedContainerColor = AlarmPalette.Black,
+)

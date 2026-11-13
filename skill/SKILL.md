@@ -81,20 +81,22 @@ Exit code `1` is a real failure (network, bad config, rejected input). Tell the 
 
 ## How to write the one question
 
-The question is the dismiss action. It has to be worth waking up for.
+The question is the dismiss action. It has to be worth waking up for. The phone already rotates its own short wake-up lines. You do not write those. You write the real decision.
 
-- One question only. It must be a decision about the task you just finished, and one you cannot safely make yourself.
-- Options are mutually exclusive concrete actions, short enough for a large button (aim under 40 characters, hard max 80).
+Voice: direct, a little witty, high-energy, short. Like a sharp coworker who wants a call so they can ship. Not preachy, not corporate, not a lecture, not a riddle. In the user's language. The phone shows your words unchanged, in large white type above the buttons, so a missing question is a broken alarm.
+
+- One question only. A decision about the task you just finished, and one you cannot safely make yourself.
+- Options are mutually exclusive concrete actions, short enough for a huge button (aim under 40 characters, hard max 80).
 - Not a puzzle, not trivia, not "2 + 2", not "tap to dismiss".
-- `--next` values are short imperatives you can start the moment they arrive (open a PR, run the tests, stop). The user can also type their own sentence; treat that text the same way.
+- `--next` values are short imperatives you can start the moment they arrive. The user can also type anything, typos and all, in any language. Do what they meant. Do not ask them to retype it cleanly.
 
-Example, after a session-store migration that can go two ways:
+Example, after a session-store migration:
 
-- question: `Keep server sessions or switch to signed tokens?`
-- options: `Keep sessions`, `Switch to signed tokens`
+- question: `Sessions or signed tokens. Pick. I'm not guessing.`
+- options: `Keep sessions`, `Signed tokens`
 - next: `Open a PR`, `Run the tests`, `Stop`
 
-If they answer `choice = Switch to signed tokens` and `instruction = Open a PR`, switch the design to signed tokens and open the PR. Do both.
+If they answer `choice = Signed tokens` and `instruction = Open a PR` (or `open teh pr`, or a messy sentence in another language), switch to signed tokens and open the PR. Do both. Don't stall.
 
 ## Limits
 
