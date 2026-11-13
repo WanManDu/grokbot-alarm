@@ -101,6 +101,11 @@ class Prefs(context: Context) {
         return agent
     }
 
+    fun renameAgent(id: String, name: String) {
+        val clean = name.trim().ifBlank { "AI" }.take(40)
+        writeAgents(agents().map { if (it.id == id) it.copy(name = clean) else it })
+    }
+
     fun dropAgent(id: String) {
         writeAgents(agents().filter { it.id != id })
         writeTasks(tasks().filter { it.agentId != id })

@@ -303,6 +303,12 @@ def cmd_init(args: argparse.Namespace) -> int:
         tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         os.chmod(tmp, 0o600)
         tmp.replace(path)
+    hello = json.dumps({"v": 1, "type": "hello", "agent": agent}, ensure_ascii=False)
+    try:
+        publish(server, inbox_topic(secret), hello, priority=3)
+    except Exception as exc:  # noqa: BLE001
+        print(str(exc), file=sys.stderr)
+        return 1
     print(
         json.dumps(
             {

@@ -17,6 +17,9 @@
     <string name="not_listening">Not listening.</string>
     <string name="no_ais">No AIs yet.</string>
     <string name="add">Add</string>
+    <string name="connect_bot">Connect bot</string>
+    <string name="waiting_for_bot">Waiting for bot</string>
+    <string name="connected">Connected</string>
     <string name="name">Name</string>
     <string name="ais">AIs</string>
     <string name="phone">Phone</string>

@@ -30,7 +30,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -199,9 +198,10 @@ private fun HomeScreen(now: Long, onAdd: () -> Unit, onOpen: (String) -> Unit, o
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        agoLabel(agent.lastSeen, now, listening),
-                        color = AlarmPalette.Mute,
+                        stringResource(if (agent.lastSeen <= 0L) R.string.waiting_for_bot else R.string.connected),
+                        color = if (agent.lastSeen <= 0L) AlarmPalette.Mute else AlarmPalette.Accent,
                         fontFamily = AlarmFont,
+                        fontWeight = FontWeight.Bold,
                         fontSize = 15.sp,
                     )
                 }
@@ -281,14 +281,54 @@ private fun AddScreen(onBack: () -> Unit, onAdded: (String) -> Unit) {
             label = { Text(stringResource(R.string.name), fontFamily = AlarmFont) },
             colors = fieldColors(),
         )
-        WhiteButton(stringResource(R.string.add), Modifier.fillMaxWidth()) {
-            val prefs = Prefs(context)
-            val agent = prefs.addAgent(name)
-            ListenState.reload(prefs)
-            if (Permissions.notificationsGranted(context)) ListenService.start(context)
+        var createdId by rememberSaveable { mutableStateOf("") }
+        WhiteButton(stringResource(R.string.connect_bot), Modifier.fillMaxWidth()) {
+            val agent = ensureAgent(context, createdId, name)
+            createdId = agent.id
+            shareSetup(context, setupLine(agent.name, agent.secret, Prefs(context).server))
             onAdded(agent.id)
         }
+        Text(
+            stringResource(R.string.copy),
+            modifier = Modifier.clickable {
+                val agent = ensureAgent(context, createdId, name)
+                createdId = agent.id
+                val clip = context.getSystemService(ClipboardManager::class.java)
+                clip.setPrimaryClip(
+                    ClipData.newPlainText(
+                        "grokbot-alarm",
+                        setupLine(agent.name, agent.secret, Prefs(context).server),
+                    ),
+                )
+            },
+            color = AlarmPalette.Mute,
+            fontFamily = AlarmFont,
+            fontWeight = FontWeight.Bold,
+            fontSize = 16.sp,
+        )
     }
+}
+
+private fun ensureAgent(context: android.content.Context, createdId: String, name: String): Agent {
+    val prefs = Prefs(context)
+    val existing = createdId.takeIf { it.isNotEmpty() }?.let { prefs.agent(it) }
+    val agent = if (existing == null) {
+        prefs.addAgent(name)
+    } else {
+        prefs.renameAgent(existing.id, name)
+        prefs.agent(existing.id) ?: existing
+    }
+    ListenState.reload(prefs)
+    if (Permissions.notificationsGranted(context)) ListenService.start(context)
+    return agent
+}
+
+private fun shareSetup(context: android.content.Context, text: String) {
+    val send = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, text)
+    }
+    context.startActivity(Intent.createChooser(send, null))
 }
 
 @Composable
@@ -298,7 +338,6 @@ private fun AgentScreen(agentId: String, now: Long, onBack: () -> Unit) {
     var note by remember { mutableStateOf("") }
     val agent = ListenState.agents.value.find { it.id == agentId }
     val tasks = ListenState.tasks.value.filter { it.agentId == agentId }.sortedByDescending { it.registeredAt }
-    val listening = ListenState.connected.value
     LaunchedEffect(note) {
         if (note.isNotEmpty()) {
             delay(1600)
@@ -327,32 +366,29 @@ private fun AgentScreen(agentId: String, now: Long, onBack: () -> Unit) {
             fontSize = 34.sp,
         )
         Text(
-            agoLabel(agent.lastSeen, now, listening),
-            color = AlarmPalette.Mute,
+            stringResource(if (agent.lastSeen <= 0L) R.string.waiting_for_bot else R.string.connected),
+            color = if (agent.lastSeen <= 0L) AlarmPalette.Mute else AlarmPalette.Accent,
             fontFamily = AlarmFont,
+            fontWeight = FontWeight.Bold,
             fontSize = 16.sp,
         )
         val line = setupLine(agent.name, agent.secret, prefs.server)
-        SelectionContainer {
-            Text(
-                line,
-                color = AlarmPalette.Mute,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 13.sp,
-                lineHeight = 18.sp,
-            )
-        }
-        WhiteButton(stringResource(R.string.copy), Modifier.fillMaxWidth()) {
-            val clip = context.getSystemService(ClipboardManager::class.java)
-            clip.setPrimaryClip(ClipData.newPlainText("grokbot-alarm", line))
-            note = context.getString(R.string.copied)
+        if (agent.lastSeen <= 0L) {
+            WhiteButton(stringResource(R.string.connect_bot), Modifier.fillMaxWidth()) {
+                shareSetup(context, line)
+            }
         }
         Text(
-            if (note.isNotEmpty()) note else stringResource(R.string.paste_hint),
-            color = if (note.isNotEmpty()) AlarmPalette.White else AlarmPalette.Mute,
+            if (note.isNotEmpty()) note else stringResource(R.string.copy),
+            modifier = Modifier.clickable {
+                val clip = context.getSystemService(ClipboardManager::class.java)
+                clip.setPrimaryClip(ClipData.newPlainText("grokbot-alarm", line))
+                note = context.getString(R.string.copied)
+            },
+            color = AlarmPalette.Mute,
             fontFamily = AlarmFont,
-            fontWeight = if (note.isNotEmpty()) FontWeight.Bold else FontWeight.Normal,
-            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+            fontSize = 16.sp,
         )
         if (tasks.isEmpty()) {
             Text(

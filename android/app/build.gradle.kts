@@ -11,8 +11,8 @@ android {
         applicationId = "works.gauss.grokbotalarm"
         minSdk = 26
         targetSdk = 37
-        versionCode = 8
-        versionName = "0.3.0"
+        versionCode = 9
+        versionName = "0.3.1"
         val donateUrl = (project.findProperty("DONATE_URL") as? String)?.trim()
             ?.ifEmpty { null }
             ?: "https://github.com/sponsors/WanManDu"

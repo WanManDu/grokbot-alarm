@@ -138,7 +138,7 @@ python3 cli/grokbot_alarm.py wait --id "$ID" --timeout 30
 1. Install the debug APK from the **grokbot-alarm-debug** artifact on this branch (Actions → the Android workflow → `debug-apk` → Artifacts). Allow the browser or Files app to install it.
 2. Open the app and accept **Alerts** when asked.
 3. Open **Phone**. Tap **Screen**, **Battery**, and **DND**, and accept each system page. **On** means granted. Screen has to be On or the activity cannot come up over a sleeping lock screen. Battery keeps the listener alive. DND lets the sound play through Do Not Disturb. **Test** on this screen fires a local alarm.
-4. Back on the home screen, tap **Add**, name the AI, open it, tap **Copy**, and paste the line into that AI's chat. It includes `as <name>`. The bot runs `init` with the secret, server, and agent name. The dot turns to **Ears on** once that AI exists and alerts are allowed. Then, for a quiet ask that escalates, use `--escalate-after 120` on `ring`. Omit it to ring immediately:
+4. Back on the home screen, tap **Add**, type a name, tap **Connect bot**, and pick the bot's app in the share sheet. The shared text is the install block (curl `install.sh`). The AI stays **Waiting for bot** until that install's `init` (or the first `register`) reaches the phone, then it shows **Connected**. **Copy** is the small fallback. Then, for a quiet ask that escalates, use `--escalate-after 120` on `ring`. Omit it to ring immediately:
 
 ```bash
 ID=$(python3 cli/grokbot_alarm.py register --bot "coder" --task "Migrate the session store")

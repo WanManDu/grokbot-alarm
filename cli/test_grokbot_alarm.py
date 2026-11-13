@@ -197,6 +197,10 @@ class CliTest(unittest.TestCase):
         self.assertEqual(init.returncode, 0, init.stderr)
         paired = json.loads(init.stdout)
         self.assertEqual(paired["agent"], "coder")
+        with LOCK:
+            hello = json.loads(STORE[paired["inbox"]][0])
+        self.assertEqual(hello["type"], "hello")
+        self.assertEqual(hello["agent"], "coder")
         registered = self.run_cli("register", "--bot", "coder", "--task", "Ship the flag")
         alarm_id = registered.stdout.strip()
         with LOCK:
