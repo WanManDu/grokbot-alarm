@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Alarm</string>
+    <string name="fuel">Fuel the bot.</string>
     <string name="secret">Secret</string>
     <string name="server">Server</string>
     <string name="alerts">Alerts</string>

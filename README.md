@@ -171,6 +171,17 @@ cd android
 
 The debug APK is signed with `android/debug.keystore` (password `android`, alias `androiddebugkey`). It is a public debug key so CI upgrades install over each other. It is not a release identity.
 
+## Support
+
+The home screen can show a small "Fuel the bot." link. It stays hidden until you set a URL. No in-app purchases.
+
+```bash
+cd android
+./gradlew assembleDebug -PDONATE_URL=https://example.com/donate
+```
+
+Or put `DONATE_URL=https://example.com/donate` in `android/gradle.properties`. The default is empty. `.github/FUNDING.yml` is a commented placeholder for the same idea on GitHub.
+
 ## License
 
 MIT, copyright GaussWorks.

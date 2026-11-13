@@ -11,8 +11,11 @@ android {
         applicationId = "works.gauss.grokbotalarm"
         minSdk = 26
         targetSdk = 37
-        versionCode = 5
-        versionName = "0.2.1"
+        versionCode = 6
+        versionName = "0.2.2"
+        val donateUrl = (project.findProperty("DONATE_URL") as? String)?.trim().orEmpty()
+        val escapedDonate = donateUrl.replace("\\", "\\\\").replace("\"", "\\\"")
+        buildConfigField("String", "DONATE_URL", "\"$escapedDonate\"")
     }
 
     signingConfigs {
@@ -41,6 +44,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     packaging {

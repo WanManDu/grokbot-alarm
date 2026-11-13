@@ -4,12 +4,14 @@ import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -155,6 +157,10 @@ private fun HomeScreen(now: Long, onAdd: () -> Unit, onOpen: (String) -> Unit, o
             .padding(horizontal = 24.dp, vertical = 28.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        val donateUrl = BuildConfig.DONATE_URL
+        if (donateUrl.isNotBlank()) {
+            DonateBanner(donateUrl)
+        }
         StatusRow(listening)
         Text(
             stringResource(R.string.ais),
@@ -533,6 +539,41 @@ private fun PhoneScreen(tick: Int, onBack: () -> Unit) {
                 Intent(context, AlarmActivity::class.java).putExtra(AlarmActivity.EXTRA, payload.toJson()),
             )
         }
+    }
+}
+
+@Composable
+private fun DonateBanner(url: String) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .border(1.dp, AlarmPalette.Hairline, RoundedCornerShape(14.dp))
+            .clickable {
+                val view = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                runCatching { context.startActivity(view) }
+            }
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            stringResource(R.string.fuel),
+            modifier = Modifier.weight(1f),
+            color = AlarmPalette.White,
+            fontFamily = AlarmFont,
+            fontWeight = FontWeight.Bold,
+            fontSize = 16.sp,
+        )
+        Text(
+            "→",
+            color = AlarmPalette.Accent,
+            fontFamily = AlarmFont,
+            fontWeight = FontWeight.Bold,
+            fontSize = 18.sp,
+        )
     }
 }
 
