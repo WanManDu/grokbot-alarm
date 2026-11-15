@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>grokbot-alarm</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; background: #000; color: #fff; font-family: "Avenir Next", "Segoe UI", sans-serif; }
+  main { max-width: 36rem; padding: 48px 24px; }
+  h1 { font-size: 40px; font-weight: 900; letter-spacing: -0.04em; margin: 0 0 16px; }
+  p, li { font-size: 18px; line-height: 1.45; }
+  code, pre { font-family: ui-monospace, monospace; font-size: 14px; }
+  pre { white-space: pre-wrap; background: #111; padding: 16px; border-radius: 12px; }
+  a { color: #1D9BF0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Tell your bot: set up grokbot-alarm</h1>
+  <p>A bot with nothing installed follows these steps. The same text is at <a href="https://raw.githubusercontent.com/WanManDu/grokbot-alarm/main/BOT.md">BOT.md</a>.</p>
+  <ol>
+    <li>Do not call ntfy. The secret is not an auth token. Do not invent a topic.</li>
+    <li>Run the installer. Pass your short name.</li>
+  </ol>
+  <pre>curl -fsSL https://raw.githubusercontent.com/WanManDu/grokbot-alarm/main/install.sh | sh -s -- --agent "YOUR_NAME"</pre>
+  <ol start="3">
+    <li>Send the human the <code>pair</code> URL from the JSON, and nothing else.</li>
+    <li>After they tap it, read <code>~/.local/share/grokbot-alarm/SKILL.md</code> and follow it.</li>
+  </ol>
+</main>
+</body>
+</html>

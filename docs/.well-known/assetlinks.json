@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "works.gauss.grokbotalarm",
+      "sha256_cert_fingerprints": [
+        "EF:36:26:2F:00:B4:CB:41:CE:0E:D2:AA:16:17:AE:A0:40:3E:0E:E3:8B:E4:0F:E3:E2:60:7F:73:A0:15:21:B4"
+      ]
+    }
+  }
+]

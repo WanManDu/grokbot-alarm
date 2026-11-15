@@ -11,8 +11,8 @@ android {
         applicationId = "works.gauss.grokbotalarm"
         minSdk = 26
         targetSdk = 37
-        versionCode = 9
-        versionName = "0.3.1"
+        versionCode = 10
+        versionName = "0.4.0"
         val donateUrl = (project.findProperty("DONATE_URL") as? String)?.trim()
             ?.ifEmpty { null }
             ?: "https://github.com/sponsors/WanManDu"
@@ -67,4 +67,5 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.core:core-ktx:1.19.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
+    testImplementation("junit:junit:4.13.2")
 }

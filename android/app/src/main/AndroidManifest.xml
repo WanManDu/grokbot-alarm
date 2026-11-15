@@ -26,10 +26,28 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:theme="@style/Theme.GrokbotAlarm">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="grokbot-alarm" android:host="pair" />
+            </intent-filter>
+            <!-- Verified only when assetlinks.json is on the host root.
+                 Project Pages cannot serve that path; the pair page uses the scheme above. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="wanmandu.github.io"
+                    android:pathPrefix="/grokbot-alarm/pair" />
             </intent-filter>
         </activity>
 

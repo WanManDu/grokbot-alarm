@@ -22,10 +22,13 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from urllib.parse import parse_qsl, quote, urlsplit
 
 USER_AGENT = "grokbot-alarm/0.1"
 DEFAULT_SERVER = "https://ntfy.sh"
 MAX_TIMEOUT = 24 * 60 * 60
+# Fragment only. The page never receives s, srv, or n in the query string.
+PAIR_PAGE = "https://wanmandu.github.io/grokbot-alarm/pair"
 
 
 def config_root() -> Path:
@@ -83,6 +86,46 @@ def valid_server(server: str) -> bool:
     return True
 
 
+def pairing_link(server: str, secret: str, agent: str) -> str:
+    """https URL whose fragment is the only copy of the pairing data."""
+    fragment = "&".join(
+        f"{key}={quote(value, safe='')}"
+        for key, value in (("s", secret), ("srv", server), ("n", agent))
+    )
+    return f"{PAIR_PAGE}#{fragment}"
+
+
+def parse_pairing_link(url: str) -> dict | None:
+    """Read secret, server, and name from a pair link, custom scheme, or intent URL."""
+    query = _pair_query(url)
+    if query is None:
+        return None
+    fields = {key: value for key, value in parse_qsl(query, keep_blank_values=True)}
+    secret = fields.get("s", "")
+    server = fields.get("srv", "").strip().rstrip("/")
+    name = " ".join(fields.get("n", "").split())[:40] or "AI"
+    if not valid_secret(secret) or not valid_server(server):
+        return None
+    return {"secret": secret, "server": server, "name": name}
+
+
+def _pair_query(url: str) -> str | None:
+    text = url.strip()
+    lower = text.lower()
+    if lower.startswith("intent://") or lower.startswith("grokbot-alarm://"):
+        if "?" not in text:
+            return None
+        return text.split("?", 1)[1].split("#", 1)[0]
+    if lower.startswith("https://") or lower.startswith("http://"):
+        parts = urlsplit(text)
+        if parts.hostname != "wanmandu.github.io":
+            return None
+        if parts.path.rstrip("/") != "/grokbot-alarm/pair":
+            return None
+        return parts.fragment or parts.query or None
+    return None
+
+
 def clean_text(value: str, limit: int) -> str:
     text = " ".join(value.split())
     if not text:
@@ -126,7 +169,9 @@ def resolve_agent_name(explicit: str | None) -> str:
     if len(agents) == 1:
         return str(agents[0].get("agent") or "default")
     if not agents:
-        raise RuntimeError("no pairing config; paste the phone's setup line so install.sh can run")
+        raise RuntimeError(
+            "no pairing config; follow https://raw.githubusercontent.com/WanManDu/grokbot-alarm/main/BOT.md"
+        )
     names = ", ".join(str(item.get("agent") or "?") for item in agents)
     raise RuntimeError(f"multiple agents ({names}); pass --agent or set GROKBOT_ALARM_AGENT")
 
@@ -145,7 +190,7 @@ def load_config(explicit_agent: str | None = None) -> dict:
     server = os.environ.get("GROKBOT_ALARM_SERVER") or data.get("server") or ""
     secret = os.environ.get("GROKBOT_ALARM_SECRET") or data.get("secret") or ""
     if not server or not secret:
-        raise RuntimeError(f"no pairing config for {agent}; paste that AI's setup line")
+        raise RuntimeError(f"no pairing config for {agent}; run install.sh for that agent")
     if not valid_server(server):
         raise RuntimeError(f"bad server URL: {server}")
     if not valid_secret(secret):
@@ -309,6 +354,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     except Exception as exc:  # noqa: BLE001
         print(str(exc), file=sys.stderr)
         return 1
+    link = pairing_link(server, secret, agent)
     print(
         json.dumps(
             {
@@ -317,9 +363,11 @@ def cmd_init(args: argparse.Namespace) -> int:
                 "agent": agent,
                 "inbox": inbox_topic(secret),
                 "reply": reply_topic(secret),
+                "pair": link,
             }
         )
     )
+    print(link, file=sys.stderr)
     print(f"config: {path}", file=sys.stderr)
     return 0
 
@@ -474,7 +522,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     init = sub.add_parser("init", help="write the pairing config")
     init.add_argument("--server", help=f"ntfy base URL (default {DEFAULT_SERVER})")
-    init.add_argument("--secret", help="secret copied from the phone, or any 16-40 char token")
+    init.add_argument(
+        "--secret",
+        help="optional; generated when omitted. Pass one only if the phone already created it",
+    )
     init.add_argument("--agent", help="name of this AI, shown on the phone")
     init.add_argument("--force", action="store_true", help="rotate the secret")
 

@@ -101,6 +101,26 @@ class Prefs(context: Context) {
         return agent
     }
 
+    /**
+     * Save an AI the bot already created. Same secret returns the existing AI.
+     * The first AI on this phone adopts [server]; later AIs keep the current one.
+     */
+    fun connectPaired(name: String, secret: String, server: String): Agent {
+        val cleanName = name.trim().ifBlank { "AI" }.take(40)
+        val cleanServer = server.trim().trimEnd('/')
+        val existing = agents().find { it.secret == secret }
+        if (existing != null) {
+            if (existing.lastSeen <= 0L && existing.name != cleanName) {
+                renameAgent(existing.id, cleanName)
+            }
+            return agent(existing.id) ?: existing
+        }
+        if (agents().isEmpty() && validServer(cleanServer)) this.server = cleanServer
+        val created = Agent(newId(), cleanName, secret, 0L)
+        writeAgents(agents() + created)
+        return created
+    }
+
     fun renameAgent(id: String, name: String) {
         val clean = name.trim().ifBlank { "AI" }.take(40)
         writeAgents(agents().map { if (it.id == id) it.copy(name = clean) else it })
