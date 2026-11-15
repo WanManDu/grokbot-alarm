@@ -1,8 +1,18 @@
 # grokbot-alarm
 
-An alarm for when an AI is stuck on a human. The person pairs each AI (a Grok Bot, or any other agent on a Linux box). That AI registers tasks. When it needs an approval or the next step, it posts a needs-you. If the human doesn't answer in time, the phone escalates to a full alarm and will not stop ringing until they solve **one real decision** about that task, then send the next instruction. The answer goes back to that AI, which continues immediately.
+Tell your bot:
 
-The home screen is the list of Connected AIs. Each AI has its own secret, so one chat cannot see another's tasks. Questions and options are shown in whatever language the AI sent.
+```text
+set up grokbot-alarm
+```
+
+The bot needs nothing installed. It follows [BOT.md](https://raw.githubusercontent.com/WanManDu/grokbot-alarm/main/BOT.md) (the same steps are on [the project page](https://wanmandu.github.io/grokbot-alarm/)), runs `install.sh`, and replies with one `https://` link. Tap it. The phone asks **Connect NAME?** once. That AI shows **Waiting for bot** until the bot's hello lands, then **Connected**. No copy, no paste.
+
+The link looks like `https://wanmandu.github.io/grokbot-alarm/pair#s=…&srv=…&n=…`. The secret is in the fragment, so it is not sent to the web server. The page opens the app with `grokbot-alarm://pair`. **Open app** and an install link stay on the page if the app is not there yet.
+
+An alarm for when an AI is stuck on a human. The bot pairs itself; the human only taps the link. That AI registers tasks. When it needs an approval or the next step, it posts a needs-you. If the human doesn't answer in time, the phone escalates to a full alarm and will not stop ringing until they solve **one real decision** about that task, then send the next instruction. The answer goes back to that AI, which continues immediately.
+
+The home screen is the list of AIs. Each AI has its own secret, so one chat cannot see another's tasks. Questions and options are shown in whatever language the AI sent. **Add** and **Connect bot** are the fallback when a chat app cannot receive the link.
 
 ```
 phone                                 ntfy                              AI CLI
@@ -72,7 +82,7 @@ No Android Studio. The debug APK is a workflow artifact named **grokbot-alarm-de
    - **Battery** — ignore battery optimizations, so the listener is not frozen while the phone sleeps.
    - **DND** — notification policy access. While the alarm is ringing the app switches interruption filter to all, which is as far as stock Android lets a normal app play through Do Not Disturb. The alarm stream (`USAGE_ALARM`) already plays when the ringer is silent.
 5. The round dot at the top turns green when the listener is connected. An ongoing notification titled Alarm stays in the shade. That is expected.
-6. Tap **Add**, name that AI, then **Copy**. The clipboard gets one line: `Set up grokbot-alarm with secret <secret> on server <server> as <name>`. Paste it into that AI's chat. The bot runs `init --secret … --server … --agent …`. Repeat Add for each AI. **Phone** holds Server, Alerts, Screen, Battery, DND, and Test.
+6. With no AIs yet, the home screen says **Tell your bot: set up grokbot-alarm**. Say that to the bot. Tap the link it sends back, then **Connect**. **Add** is the small fallback: it still shares a setup block into another app. **Phone** holds Server, Alerts, Screen, Battery, DND, and Test.
 
 **Test** plays a local alarm with no network. The question is `2 + 2`. Tap `4` (the sound stops) then `OK`. Nothing is sent.
 
@@ -84,13 +94,23 @@ minSdk 26, targetSdk 37. A force-stop in system settings kills the listener unti
 
 ### Self-host
 
-Run ntfy, put its base URL in **Server**, tap **Save**, then **Copy** and paste the line into the bot chat. `http://` is allowed for a LAN server. Topics stay open; the secret is the only access control. Anyone who has the secret can ring the phone and read answers.
+Tell the bot the base URL. It passes `--server` to `install.sh`. The first **Connect** on the phone adopts that URL. Later AIs on the same phone stay on it. `http://` is allowed for a LAN server. Topics stay open; the secret is the only access control. Anyone who has the secret, including anyone who opens the pair link, can ring the phone and read answers.
+
+### Pair page
+
+GitHub Pages serves `docs/` at `https://wanmandu.github.io/grokbot-alarm/`. One setting, once: the repo **Settings → Pages → Deploy from a branch → `main` → `/docs`**. The pair page is `docs/pair/index.html`. `docs/.well-known/assetlinks.json` carries the debug key fingerprint (`EF:36:26:2F:00:B4:CB:41:CE:0E:D2:AA:16:17:AE:A0:40:3E:0E:E3:8B:E4:0F:E3:E2:60:7F:73:A0:15:21:B4`, package `works.gauss.grokbotalarm`). Android only fetches that file from `https://wanmandu.github.io/.well-known/assetlinks.json`, which a project site cannot host. Until that file is also published on a user or organization site at the host root, the https link opens the page, and the page opens `grokbot-alarm://pair`.
 
 ## Skill and CLI install
 
-Paste the phone's **Copy** block into the bot. A bot with no prior context can run it. The block curls `install.sh` from `main`, which downloads the CLI and `SKILL.md`, puts `~/.local/bin/grokbot-alarm` on PATH, and runs `init`. Until this branch is merged, that raw `main` URL 404s. `install.sh` itself then tries this branch. The pasted line does not, so it only works for other people after merge.
+The human says `set up grokbot-alarm`. The bot runs:
 
-Each Connected AI gets its own file, `~/.config/grokbot-alarm/agents/<name>.json` (mode 0600), so bots that share a machine do not overwrite each other. Pass `--agent` or set `GROKBOT_ALARM_AGENT`. `GROKBOT_ALARM_HOME` overrides the config root. `GROKBOT_ALARM_SERVER` and `GROKBOT_ALARM_SECRET` override that agent's file for one process.
+```bash
+curl -fsSL https://raw.githubusercontent.com/WanManDu/grokbot-alarm/main/install.sh | sh -s -- --agent "YOUR_NAME"
+```
+
+`install.sh` downloads the CLI and `SKILL.md`, puts `~/.local/bin/grokbot-alarm` on PATH, and runs `init` with no `--secret`. `init` generates the secret, publishes hello, and prints JSON whose `pair` field is the link. The bot sends that link. The public `main` URL is the one that works after this file is on `main`. `install.sh` itself, once running, tries `main` and then `cursor/bot-first-pair-3183`.
+
+Each AI gets its own file, `~/.config/grokbot-alarm/agents/<name>.json` (mode 0600), so bots that share a machine do not overwrite each other. Pass `--agent` or set `GROKBOT_ALARM_AGENT`. `GROKBOT_ALARM_HOME` overrides the config root. `GROKBOT_ALARM_SERVER` and `GROKBOT_ALARM_SECRET` override that agent's file for one process. `init` again reprints the same link.
 
 The installed skill tells the bot when to register, how to write the one decision question, and to continue from `choice` and `instruction` without asking again. It also tells the bot to save the file as a persistent skill if the platform allows that.
 
@@ -98,7 +118,7 @@ Commands:
 
 | Command | Stdout | Exit |
 | --- | --- | --- |
-| `init` | JSON with `server`, `secret`, `inbox`, `reply` | 0, or 1 if the secret/URL is rejected |
+| `init` | JSON with `server`, `secret`, `agent`, `inbox`, `reply`, `pair` | 0, or 1 if the secret/URL is rejected |
 | `register --bot --task` | alarm id | 0, or 1 on publish failure |
 | `ring --id --question --option … --next …` | nothing (a note on stderr) | 0 or 1 |
 | `wait --id --timeout SECONDS` | answer JSON | 0 answered, 2 timeout, 1 error |
@@ -138,7 +158,7 @@ python3 cli/grokbot_alarm.py wait --id "$ID" --timeout 30
 1. Install the debug APK from the **grokbot-alarm-debug** artifact on this branch (Actions → the Android workflow → `debug-apk` → Artifacts). Allow the browser or Files app to install it.
 2. Open the app and accept **Alerts** when asked.
 3. Open **Phone**. Tap **Screen**, **Battery**, and **DND**, and accept each system page. **On** means granted. Screen has to be On or the activity cannot come up over a sleeping lock screen. Battery keeps the listener alive. DND lets the sound play through Do Not Disturb. **Test** on this screen fires a local alarm.
-4. Back on the home screen, tap **Add**, type a name, tap **Connect bot**, and pick the bot's app in the share sheet. The shared text is the install block (curl `install.sh`). The AI stays **Waiting for bot** until that install's `init` (or the first `register`) reaches the phone, then it shows **Connected**. **Copy** is the small fallback. Then, for a quiet ask that escalates, use `--escalate-after 120` on `ring`. Omit it to ring immediately:
+4. Tell the bot `set up grokbot-alarm`. Tap the https link it replies with and confirm **Connect NAME?**. The row stays **Waiting for bot** until that install's hello (or the first `register`) arrives, then it shows **Connected**. **Add → Connect bot** is the fallback when the chat cannot open the link. Then, for a quiet ask that escalates, use `--escalate-after 120` on `ring`. Omit it to ring immediately:
 
 ```bash
 ID=$(python3 cli/grokbot_alarm.py register --bot "coder" --task "Migrate the session store")

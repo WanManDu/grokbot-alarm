@@ -62,6 +62,7 @@ import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
     private val tick = mutableIntStateOf(0)
+    private val pairRaw = mutableStateOf<String?>(null)
     private var askedNotifications = false
 
     private val requestNotifications = registerForActivityResult(
@@ -86,11 +87,23 @@ class MainActivity : ComponentActivity() {
         val prefs = Prefs(this)
         prefs.migrate()
         ListenState.reload(prefs)
+        pairRaw.value = intent?.dataString
         setContent {
             AlarmTheme {
-                Root(tick.intValue)
+                val target = pairRaw.value?.let(::parsePairLink)
+                if (target != null) {
+                    ConfirmPairScreen(target, onFinished = { pairRaw.value = null })
+                } else {
+                    Root(tick.intValue)
+                }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.dataString != null) pairRaw.value = intent.dataString
     }
 
     override fun onResume() {
@@ -170,10 +183,17 @@ private fun HomeScreen(now: Long, onAdd: () -> Unit, onOpen: (String) -> Unit, o
         )
         if (agents.isEmpty()) {
             Text(
-                stringResource(R.string.no_ais),
+                stringResource(R.string.tell_bot),
                 color = AlarmPalette.Mute,
                 fontFamily = AlarmFont,
                 fontSize = 16.sp,
+            )
+            Text(
+                stringResource(R.string.tell_bot_line),
+                color = AlarmPalette.White,
+                fontFamily = AlarmFont,
+                fontWeight = FontWeight.Black,
+                fontSize = 28.sp,
             )
         }
         agents.forEach { agent ->
@@ -218,7 +238,20 @@ private fun HomeScreen(now: Long, onAdd: () -> Unit, onOpen: (String) -> Unit, o
             HorizontalDivider(color = AlarmPalette.Hairline, thickness = 1.dp)
         }
         Spacer(Modifier.height(8.dp))
-        WhiteButton(stringResource(R.string.add), Modifier.fillMaxWidth(), onAdd)
+        if (agents.isEmpty()) {
+            Text(
+                stringResource(R.string.add),
+                modifier = Modifier
+                    .clickable(onClick = onAdd)
+                    .padding(vertical = 8.dp),
+                color = AlarmPalette.Mute,
+                fontFamily = AlarmFont,
+                fontWeight = FontWeight.Bold,
+                fontSize = 16.sp,
+            )
+        } else {
+            WhiteButton(stringResource(R.string.add), Modifier.fillMaxWidth(), onAdd)
+        }
         Spacer(Modifier.height(12.dp))
         Row(
             modifier = Modifier
@@ -243,6 +276,40 @@ private fun HomeScreen(now: Long, onAdd: () -> Unit, onOpen: (String) -> Unit, o
                 fontSize = 16.sp,
             )
         }
+    }
+}
+
+@Composable
+private fun ConfirmPairScreen(target: PairTarget, onFinished: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(AlarmPalette.Black)
+            .systemBarsPadding()
+            .padding(horizontal = 24.dp, vertical = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
+    ) {
+        Spacer(Modifier.weight(1f))
+        Text(
+            stringResource(R.string.connect_ask, target.name),
+            color = AlarmPalette.White,
+            fontFamily = AlarmFont,
+            fontWeight = FontWeight.Black,
+            fontSize = 40.sp,
+        )
+        WhiteButton(stringResource(R.string.connect), Modifier.fillMaxWidth()) {
+            val prefs = Prefs(context)
+            prefs.connectPaired(target.name, target.secret, target.server)
+            ListenState.reload(prefs)
+            if (Permissions.notificationsGranted(context)) {
+                ListenService.start(context)
+            } else if (context is MainActivity) {
+                context.askNotifications()
+            }
+            onFinished()
+        }
+        Spacer(Modifier.weight(1f))
     }
 }
 

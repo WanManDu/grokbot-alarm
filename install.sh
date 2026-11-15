@@ -1,7 +1,8 @@
 #!/bin/sh
-# Install grokbot-alarm for one Connected AI and pair it.
-# POSIX sh and curl. Safe to run again.
-# Usage: install.sh --secret SECRET --server URL --agent NAME
+# Install grokbot-alarm for one AI and print a pairing link.
+# POSIX sh and curl. Safe to run again. --secret is optional; omit it and
+# init generates one. --agent is the name shown on the phone.
+# Usage: install.sh [--secret SECRET] [--server URL] [--agent NAME]
 set -eu
 
 SHARE="${HOME}/.local/share/grokbot-alarm"
@@ -30,11 +31,6 @@ while [ $# -gt 0 ]; do
       ;;
   esac
 done
-
-if [ -z "$SECRET" ] || [ -z "$AGENT" ]; then
-  echo "usage: install.sh --secret SECRET --server URL --agent NAME" >&2
-  exit 1
-fi
 
 mkdir -p "$SHARE" "$BINDIR"
 
@@ -91,7 +87,7 @@ fi
 if [ "$installed" -eq 0 ]; then
   for base in \
     https://raw.githubusercontent.com/WanManDu/grokbot-alarm/main \
-    https://raw.githubusercontent.com/WanManDu/grokbot-alarm/cursor/grokbot-alarm-mvp-3183
+    https://raw.githubusercontent.com/WanManDu/grokbot-alarm/cursor/bot-first-pair-3183
   do
     if download_base "$base"; then
       installed=1
@@ -113,5 +109,13 @@ exec python3 "$HOME/.local/share/grokbot-alarm/grokbot_alarm.py" "$@"
 EOF
 chmod 755 "$BINDIR/grokbot-alarm"
 
-python3 "$SHARE/grokbot_alarm.py" init --secret "$SECRET" --server "$SERVER" --agent "$AGENT"
-echo "grokbot-alarm ready for $AGENT. Read $SHARE/SKILL.md" >&2
+if [ -n "$AGENT" ] && [ -n "$SECRET" ]; then
+  python3 "$SHARE/grokbot_alarm.py" init --secret "$SECRET" --server "$SERVER" --agent "$AGENT"
+elif [ -n "$AGENT" ]; then
+  python3 "$SHARE/grokbot_alarm.py" init --server "$SERVER" --agent "$AGENT"
+elif [ -n "$SECRET" ]; then
+  python3 "$SHARE/grokbot_alarm.py" init --secret "$SECRET" --server "$SERVER"
+else
+  python3 "$SHARE/grokbot_alarm.py" init --server "$SERVER"
+fi
+echo "Send the pair URL above to the human. Read $SHARE/SKILL.md" >&2

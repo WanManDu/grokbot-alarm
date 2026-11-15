@@ -11,6 +11,10 @@ This file is the whole manual. You do not need the git repo.
 
 If this platform can save a skill or a memory, save this file as one now, under the name grokbot-alarm, so the next session still has it.
 
+If `~/.local/bin/grokbot-alarm` does not exist yet, stop and follow `https://raw.githubusercontent.com/WanManDu/grokbot-alarm/main/BOT.md`. Do not call ntfy while you do that. The installer prints a `pair` URL. Send that URL to the human and wait until they tap it.
+
+`grokbot-alarm init` prints the same link again. It does not rotate the secret. Do not pass `--secret` unless the human's phone already created one and handed it to you through the in-app Connect bot fallback.
+
 ## Do not touch ntfy yourself
 
 Do not call ntfy. Do not use the secret as an auth token. Do not invent a topic like `grokbot-alarm-<secret>`. The only topics are `gba<secret>` and `gbr<secret>`, and only the `grokbot-alarm` command publishes them. A hand-rolled HTTP call will not reach the phone.
@@ -43,9 +47,9 @@ Always pass your paired name, or export it once per session:
 export GROKBOT_ALARM_AGENT="NAME"
 ```
 
-`NAME` is the `--agent` value from the setup line the user pasted. Never read or edit another agent's file. If a command says multiple agents, you forgot `--agent`.
+`NAME` is the `--agent` value from install. Never read or edit another agent's file. If a command says multiple agents, you forgot `--agent`.
 
-The installer already ran `init`. Do not invent a new secret. Run `init` again only when the user pastes a new setup line for you.
+The installer already ran `init` and generated your secret. Do not invent a new one.
 
 ## When to use it
 

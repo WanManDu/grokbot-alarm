@@ -13,10 +13,12 @@ import unittest
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "cli" / "grokbot_alarm.py"
+sys.path.insert(0, str(ROOT / "cli"))
+import grokbot_alarm as gba  # noqa: E402
 
 STORE: dict[str, list[str]] = {}
 LOCK = threading.Lock()
@@ -271,6 +273,129 @@ class CliTest(unittest.TestCase):
         self.assertEqual(json.loads(waited.stdout)["instruction"], "잠깐 멈춰")
         polled = self.run_cli("poll", "--id", alarm_id)
         self.assertEqual(json.loads(polled.stdout)["instruction"], "잠깐 멈춰")
+
+    def test_install_script_generates_a_link_and_still_rings(self) -> None:
+        home_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(home_dir.cleanup)
+        home = home_dir.name
+        env = os.environ.copy()
+        env["HOME"] = home
+        env["GROKBOT_ALARM_SRC"] = str(ROOT)
+        env.pop("GROKBOT_ALARM_HOME", None)
+        env.pop("GROKBOT_ALARM_SECRET", None)
+        env.pop("GROKBOT_ALARM_SERVER", None)
+        env.pop("GROKBOT_ALARM_AGENT", None)
+        env.pop("XDG_CONFIG_HOME", None)
+
+        def install() -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                ["sh", str(ROOT / "install.sh"), "--server", self.base, "--agent", "Coder One"],
+                capture_output=True,
+                text=True,
+                env=env,
+                check=False,
+            )
+
+        first = install()
+        self.assertEqual(first.returncode, 0, first.stderr)
+        paired = json.loads(first.stdout)
+        self.assertEqual(paired["agent"], "Coder One")
+        self.assertNotIn(paired["secret"], paired["pair"].split("#", 1)[0])
+        parsed = gba.parse_pairing_link(paired["pair"])
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertEqual(parsed["secret"], paired["secret"])
+        self.assertEqual(parsed["server"], self.base)
+        self.assertEqual(parsed["name"], "Coder One")
+        self.assertIn(paired["pair"], first.stderr)
+
+        again = install()
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertEqual(json.loads(again.stdout)["secret"], paired["secret"])
+
+        wrapper = str(Path(home) / ".local" / "bin" / "grokbot-alarm")
+        registered = subprocess.run(
+            [wrapper, "register", "--agent", "Coder One", "--bot", "Coder One", "--task", "MVP check"],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        self.assertEqual(registered.returncode, 0, registered.stderr)
+        alarm_id = registered.stdout.strip()
+        ring = subprocess.run(
+            [
+                wrapper,
+                "ring",
+                "--agent",
+                "Coder One",
+                "--id",
+                alarm_id,
+                "--question",
+                "Ship it?",
+                "--option",
+                "Yes",
+                "--option",
+                "No",
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        self.assertEqual(ring.returncode, 0, ring.stderr)
+        answer = json.dumps(
+            {"v": 1, "type": "answer", "id": alarm_id, "choice": "Yes", "instruction": "Keep going"}
+        )
+        req = urllib.request.Request(
+            f"{self.base}/{paired['reply']}",
+            data=answer.encode(),
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            self.assertEqual(resp.status, 200)
+        waited = subprocess.run(
+            [wrapper, "wait", "--agent", "Coder One", "--id", alarm_id, "--timeout", "5"],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        self.assertEqual(waited.returncode, 0, waited.stderr)
+        self.assertEqual(json.loads(waited.stdout)["instruction"], "Keep going")
+
+
+class PairParseTest(unittest.TestCase):
+    def test_fragment_scheme_and_intent(self) -> None:
+        secret = "0123456789abcdef0123456789abcdef"
+        link = gba.pairing_link("https://ntfy.sh", secret, "Coder One")
+        self.assertEqual(
+            link,
+            "https://wanmandu.github.io/grokbot-alarm/pair"
+            f"#s={secret}&srv=https%3A%2F%2Fntfy.sh&n=Coder%20One",
+        )
+        got = gba.parse_pairing_link(link)
+        self.assertEqual(got, {"secret": secret, "server": "https://ntfy.sh", "name": "Coder One"})
+        query = "&".join(
+            (
+                f"s={secret}",
+                "srv=" + quote("http://127.0.0.1:8080", safe=""),
+                "n=" + quote("코더", safe=""),
+            )
+        )
+        for url in (
+            f"grokbot-alarm://pair?{query}",
+            f"intent://pair?{query}#Intent;scheme=grokbot-alarm;package=works.gauss.grokbotalarm;end",
+        ):
+            parsed = gba.parse_pairing_link(url)
+            self.assertEqual(parsed["server"], "http://127.0.0.1:8080")
+            self.assertEqual(parsed["name"], "코더")
+        self.assertIsNone(gba.parse_pairing_link(f"https://example.com/pair#s={secret}&srv=https%3A%2F%2Fntfy.sh"))
+        self.assertIsNone(
+            gba.parse_pairing_link(
+                "https://wanmandu.github.io/grokbot-alarm/pair#s=short&srv=https%3A%2F%2Fntfy.sh&n=A"
+            )
+        )
 
 
 if __name__ == "__main__":
