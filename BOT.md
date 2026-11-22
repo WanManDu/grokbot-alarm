@@ -6,11 +6,11 @@ The human asked you to set up grokbot-alarm. You have nothing installed. Do exac
 
 2. Do not pipe a script into a shell. Check out the pinned commit, verify the checksum file, then run the installer that is in that tree.
 
-`REV` and `SUMS_SHA` below are filled in when this file is updated to name the commit that contains the matching `checksums.sha256`. Until that line is a 40-character hex commit, stop and tell the human the pin is not published yet. Do not fall back to `main` or to `curl | sh`.
+`REV` is a full git commit (40 hex characters). `SUMS_SHA` is the sha256 of `checksums.sha256` in that commit (64 hex characters). Do not fall back to `main` or to `curl | sh`. If either value does not match that length, stop.
 
 ```bash
-REV="PIN_NOT_SET"
-SUMS_SHA="PIN_NOT_SET"
+REV="b778e50fdb4ff91a84ae3e02b5f509b8d2dea71f"
+SUMS_SHA="db581c373f0a77cf25294d204ffe7a4e1c87851d9bc1dc60fd3a2e79616a271e"
 mkdir -p "$HOME/src/grokbot-alarm/cli" "$HOME/src/grokbot-alarm/skill"
 cd "$HOME/src/grokbot-alarm"
 curl -fsSL -o checksums.sha256 "https://raw.githubusercontent.com/WanManDu/grokbot-alarm/${REV}/checksums.sha256"
