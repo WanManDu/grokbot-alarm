@@ -109,10 +109,11 @@ class AlarmActivity : ComponentActivity() {
             },
         )
         val quiet = intent.getBooleanExtra(EXTRA_QUIET, false)
+        val agentId = intent.getStringExtra(EXTRA_AGENT).orEmpty()
         if (!quiet) Ringer.start(this, payload.id)
         setContent {
             AlarmTheme {
-                AlarmScreen(payload)
+                AlarmScreen(payload, agentId)
             }
         }
     }
@@ -134,11 +135,12 @@ class AlarmActivity : ComponentActivity() {
     companion object {
         const val EXTRA = "payload"
         const val EXTRA_QUIET = "quiet"
+        const val EXTRA_AGENT = "agent"
     }
 }
 
 @Composable
-private fun AlarmScreen(payload: AlarmPayload) {
+private fun AlarmScreen(payload: AlarmPayload, agentId: String) {
     val context = LocalContext.current
     var step by rememberSaveable { mutableIntStateOf(1) }
     var choice by rememberSaveable { mutableStateOf("") }
@@ -171,17 +173,29 @@ private fun AlarmScreen(payload: AlarmPayload) {
         sending = true
         failed = false
         val app = context.applicationContext
-        val server = Prefs(app).server
-        val body = JSONObject()
-            .put("v", 1)
-            .put("type", "answer")
-            .put("id", alarmId)
-            .put("choice", choice)
-            .put("instruction", text)
-            .toString()
+        val prefs = Prefs(app)
+        val server = prefs.server
+        val agent = resolveAgent(prefs, agentId, alarmId)
+        if (agent == null) {
+            AnswerGate.release(alarmId)
+            sending = false
+            failed = true
+            return
+        }
+        val topic = replyDestination(agent.secret, payload.replyTopic)
+        val body = seal(
+            agent.secret,
+            JSONObject()
+                .put("v", PROTOCOL)
+                .put("type", "answer")
+                .put("id", alarmId)
+                .put("choice", choice)
+                .put("instruction", text)
+                .toString(),
+        )
         Thread {
             val ok = runCatching {
-                Ntfy.publish(server, payload.replyTopic, body, 4)
+                Ntfy.publish(server, topic, body, 4)
             }.isSuccess
             if (ok) {
                 ListenService.markAnswered(app, alarmId)
@@ -398,6 +412,12 @@ private fun ChoiceButton(label: String, enabled: Boolean = true, onClick: () -> 
             textAlign = TextAlign.Center,
         )
     }
+}
+
+private fun resolveAgent(prefs: Prefs, agentId: String, alarmId: String): Agent? {
+    if (agentId.isNotEmpty()) prefs.agent(agentId)?.let { return it }
+    val task = prefs.tasks().find { it.id == alarmId } ?: return null
+    return prefs.agent(task.agentId)
 }
 
 @Composable

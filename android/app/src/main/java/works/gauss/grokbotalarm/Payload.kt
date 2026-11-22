@@ -78,10 +78,13 @@ sealed interface Incoming {
     data class Alarm(val payload: AlarmPayload) : Incoming
 }
 
-private val topicName = Regex("^[A-Za-z0-9_-]{1,64}$")
-
 fun parseIncoming(body: String): Incoming? = try {
-    val obj = JSONObject(body)
+    parseIncomingObject(JSONObject(body))
+} catch (_: Exception) {
+    null
+}
+
+fun parseIncomingObject(obj: JSONObject): Incoming? = try {
     when (obj.optString("type")) {
         "register" -> {
             val id = obj.optString("id").trim()
@@ -116,7 +119,7 @@ private fun fromObject(obj: JSONObject, allowTest: Boolean): AlarmPayload? {
     if (id.isEmpty() || bot.isEmpty() || task.isEmpty() || question.isEmpty() || options.isEmpty()) {
         return null
     }
-    if (!test && !topicName.matches(reply)) return null
+    // replyTopic is not a destination. Callers overwrite it with replyTopic(secret).
     if (test && !allowTest) return null
     return AlarmPayload(
         id, bot, task, question, options, next, reply, test, obj.optString("agent").trim(),

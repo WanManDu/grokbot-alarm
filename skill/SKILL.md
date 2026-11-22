@@ -11,13 +11,13 @@ This file is the whole manual. You do not need the git repo.
 
 If this platform can save a skill or a memory, save this file as one now, under the name grokbot-alarm, so the next session still has it.
 
-If `~/.local/bin/grokbot-alarm` does not exist yet, stop and follow `https://raw.githubusercontent.com/WanManDu/grokbot-alarm/main/BOT.md`. Do not call ntfy while you do that. The installer prints a `pair` URL. Send that URL to the human and wait until they tap it.
+If `~/.local/bin/grokbot-alarm` does not exist yet, stop and follow `BOT.md` from the pinned commit named there. Do not call ntfy while you do that. Do not pipe a downloaded script into a shell. The installer prints one JSON object. Send the human the `pair` URL and nothing else, then wait until they tap it.
 
-`grokbot-alarm init` prints the same link again. It does not rotate the secret. Do not pass `--secret` unless the human's phone already created one and handed it to you through the in-app Connect bot fallback.
+`grokbot-alarm init` prints that same `pair` URL again. It does not print the secret or the topic ids. It does not rotate the secret. Do not pass `--secret` unless the human's phone already created one and handed it to you through the in-app Connect bot fallback.
 
 ## Do not touch ntfy yourself
 
-Do not call ntfy. Do not use the secret as an auth token. Do not invent a topic like `grokbot-alarm-<secret>`. The only topics are `gba<secret>` and `gbr<secret>`, and only the `grokbot-alarm` command publishes them. A hand-rolled HTTP call will not reach the phone.
+Do not call ntfy. Do not use the secret as an auth token or as a topic name. Do not invent a topic. Topics are derived inside the command and are not `gba` plus the secret. Only the `grokbot-alarm` command publishes, and it encrypts the body. A hand-rolled HTTP call is rejected by the phone.
 
 ## Where the command is
 
@@ -100,7 +100,7 @@ grokbot-alarm wait --agent "NAME" --id ALARM_ID --timeout 7200
 Stdout on success is one JSON object and nothing else:
 
 ```json
-{"v":1,"type":"answer","id":"...","choice":"...","instruction":"..."}
+{"v":2,"type":"answer","id":"...","choice":"...","instruction":"..."}
 ```
 
 - `choice` is the decision they picked. Apply it.

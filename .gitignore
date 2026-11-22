@@ -6,6 +6,8 @@ local.properties
 .kotlin/
 *.apk
 *.aab
+release.keystore
+*.jks
 captures/
 cli/__pycache__/
 **/__pycache__/

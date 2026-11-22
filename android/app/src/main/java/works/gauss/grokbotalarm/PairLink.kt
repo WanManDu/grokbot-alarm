@@ -38,9 +38,8 @@ private fun pairQuery(text: String): String? {
         val path = "/" + pathAndQuery.substringBefore("?").trimEnd('/')
         if (path != PAIR_PATH) return null
         val fragment = text.substringAfter("#", "")
-        if (fragment.isNotEmpty()) return fragment.substringBefore("#")
-        val query = beforeHash.substringAfter("?", "")
-        return query.ifEmpty { null }
+        if (fragment.isEmpty()) return null
+        return fragment.substringBefore("#")
     }
     return null
 }
