@@ -2,8 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>grokbot-alarm</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>grokbot-alarm</title>
 <style>
   :root { color-scheme: dark; }
   html, body { margin: 0; background: #000; color: #fff; font-family: "Avenir Next", "Segoe UI", sans-serif; }
@@ -23,7 +24,7 @@
     <li>Do not call ntfy. The secret is not an auth token. Do not invent a topic.</li>
     <li>Run the installer. Pass your short name.</li>
   </ol>
-  <pre>curl -fsSL https://raw.githubusercontent.com/WanManDu/grokbot-alarm/main/install.sh | sh -s -- --agent "YOUR_NAME"</pre>
+  <pre>Follow BOT.md. Check out the pinned commit, run sha256sum -c checksums.sha256, then sh ./install.sh --agent "YOUR_NAME"</pre>
   <ol start="3">
     <li>Send the human the <code>pair</code> URL from the JSON, and nothing else.</li>
     <li>After they tap it, read <code>~/.local/share/grokbot-alarm/SKILL.md</code> and follow it.</li>

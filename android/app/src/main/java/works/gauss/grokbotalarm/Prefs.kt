@@ -1,18 +1,29 @@
 package works.gauss.grokbotalarm
 
 import android.content.Context
+import android.content.SharedPreferences
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.SecureRandom
 
 class Prefs(context: Context) {
-    private val sp = context.applicationContext.getSharedPreferences(NAME, Context.MODE_PRIVATE)
+    private val sp = openStore(context.applicationContext)
 
     var server: String
         get() = sp.getString(KEY_SERVER, DEFAULT_SERVER) ?: DEFAULT_SERVER
         set(value) {
-            sp.edit().putString(KEY_SERVER, value.trim().trimEnd('/')).commit()
+            writeServer(value, lock = true)
         }
+
+    fun serverLocked(): Boolean = sp.getBoolean(KEY_SERVER_LOCKED, false)
+
+    private fun writeServer(value: String, lock: Boolean) {
+        val edit = sp.edit().putString(KEY_SERVER, value.trim().trimEnd('/'))
+        if (lock) edit.putBoolean(KEY_SERVER_LOCKED, true)
+        edit.commit()
+    }
 
     var lastId: String
         get() = sp.getString(KEY_LAST, "") ?: ""
@@ -61,7 +72,10 @@ class Prefs(context: Context) {
             writeAgents(listOf(agent))
             writeTasks(tasks)
         }
-        if (server.isBlank()) server = DEFAULT_SERVER
+        if (server.isBlank()) writeServer(DEFAULT_SERVER, lock = false)
+        if (agents().isNotEmpty()) {
+            sp.edit().putBoolean(KEY_SERVER_LOCKED, true).commit()
+        }
         sp.edit().putBoolean(KEY_MIGRATED, true).commit()
     }
 
@@ -103,19 +117,31 @@ class Prefs(context: Context) {
 
     /**
      * Save an AI the bot already created. Same secret returns the existing AI.
-     * The first AI on this phone adopts [server]; later AIs keep the current one.
+     * An unlocked phone adopts [server]. A locked phone keeps its server unless
+     * [allowServerChange] is true, which is only the explicit "use this host" tap.
      */
-    fun connectPaired(name: String, secret: String, server: String): Agent {
+    fun connectPaired(
+        name: String,
+        secret: String,
+        server: String,
+        allowServerChange: Boolean = false,
+    ): Agent {
         val cleanName = name.trim().ifBlank { "AI" }.take(40)
         val cleanServer = server.trim().trimEnd('/')
         val existing = agents().find { it.secret == secret }
+        if (validServer(cleanServer)) {
+            if (!serverLocked()) {
+                writeServer(cleanServer, lock = true)
+            } else if (allowServerChange && cleanServer != this.server) {
+                writeServer(cleanServer, lock = true)
+            }
+        }
         if (existing != null) {
             if (existing.lastSeen <= 0L && existing.name != cleanName) {
                 renameAgent(existing.id, cleanName)
             }
             return agent(existing.id) ?: existing
         }
-        if (agents().isEmpty() && validServer(cleanServer)) this.server = cleanServer
         val created = Agent(newId(), cleanName, secret, 0L)
         writeAgents(agents() + created)
         return created
@@ -166,17 +192,35 @@ class Prefs(context: Context) {
 
     fun sinceQuery(): String = lastId.ifBlank { "12h" }
 
-    fun hasSeen(messageId: String): Boolean = messageId.isNotEmpty() && seen().contains(messageId)
+    fun hasSeen(messageId: String): Boolean =
+        messageId.isNotEmpty() && seenEntries().any { it.first == messageId }
 
     /** Remember a ntfy message so a reconnect cannot deliver it again. */
     fun markSeen(messageId: String, timeSec: Long) {
         if (messageId.isEmpty()) return
-        val ids = seen().toMutableList()
-        if (messageId !in ids) ids.add(messageId)
-        while (ids.size > 500) ids.removeAt(0)
-        val edit = sp.edit().putString(KEY_SEEN, JSONArray(ids).toString())
+        val nowMs = if (timeSec > 0) timeSec * 1000 else System.currentTimeMillis()
+        val kept = seenEntries()
+            .filter { it.second >= nowMs - MAX_AGE_MS && it.first != messageId }
+            .toMutableList()
+        kept.add(messageId to nowMs)
+        while (kept.size > 2000) kept.removeAt(0)
+        val array = JSONArray()
+        kept.forEach { (id, stamp) -> array.put(JSONObject().put("id", id).put("t", stamp)) }
+        val edit = sp.edit().putString(KEY_SEEN, array.toString())
         if (timeSec > sp.getLong(KEY_LAST_TIME, 0L)) edit.putLong(KEY_LAST_TIME, timeSec)
         edit.putString(KEY_LAST, messageId).commit()
+    }
+
+    /**
+     * True the first time this authenticated nonce is seen inside the time window.
+     * A full window of unexpired nonces fails closed instead of forgetting one.
+     */
+    fun acceptNonce(nonce: String, timeMs: Long, nowMs: Long): Boolean {
+        val window = ReplayWindow()
+        window.load(readNonces())
+        val ok = window.accept(nonce, timeMs, nowMs)
+        writeNonces(window.entries())
+        return ok
     }
 
     fun noteWaiting(agentId: String, payload: AlarmPayload, escalateAt: Long, ringing: Boolean): Boolean {
@@ -204,17 +248,25 @@ class Prefs(context: Context) {
         return true
     }
 
-    fun isAnswered(id: String): Boolean = answered().contains(id)
+    fun isAnswered(id: String): Boolean {
+        val cutoff = System.currentTimeMillis() - MAX_AGE_MS
+        return answeredEntries().any { it.first == id && it.second >= cutoff }
+    }
 
     fun markDone(id: String) {
-        val ids = answered().toMutableList()
-        if (id !in ids) ids.add(id)
-        while (ids.size > 500) ids.removeAt(0)
+        val now = System.currentTimeMillis()
+        val kept = answeredEntries()
+            .filter { it.second >= now - MAX_AGE_MS && it.first != id }
+            .toMutableList()
+        kept.add(id to now)
+        while (kept.size > 2000) kept.removeAt(0)
+        val array = JSONArray()
+        kept.forEach { (answeredId, stamp) -> array.put(JSONObject().put("id", answeredId).put("t", stamp)) }
         val next = tasks().map { task ->
             if (task.id != id) task
             else task.copy(state = STATE_DONE, ringing = false, escalateAt = 0)
         }
-        sp.edit().putString(KEY_ANSWERED, JSONArray(ids).toString()).commit()
+        sp.edit().putString(KEY_ANSWERED, array.toString()).commit()
         writeTasks(next)
     }
 
@@ -277,18 +329,29 @@ class Prefs(context: Context) {
         }
     }
 
-    private fun seen(): List<String> = stringList(KEY_SEEN)
+    private fun seenEntries(): List<Pair<String, Long>> = timedEntries(KEY_SEEN, "id")
 
-    private fun answered(): List<String> = stringList(KEY_ANSWERED)
+    private fun answeredEntries(): List<Pair<String, Long>> = timedEntries(KEY_ANSWERED, "id")
 
-    private fun stringList(key: String): List<String> {
+    private fun readNonces(): List<Pair<String, Long>> = timedEntries(KEY_NONCES, "n")
+
+    private fun writeNonces(entries: List<Pair<String, Long>>) {
+        val array = JSONArray()
+        entries.forEach { (nonce, stamp) -> array.put(JSONObject().put("n", nonce).put("t", stamp)) }
+        sp.edit().putString(KEY_NONCES, array.toString()).commit()
+    }
+
+    /** Legacy builds stored a JSON array of id strings. Those have no timestamp and are dropped. */
+    private fun timedEntries(key: String, idField: String): List<Pair<String, Long>> {
         val raw = sp.getString(key, "[]") ?: "[]"
         return try {
             val array = JSONArray(raw)
             buildList {
                 for (i in 0 until array.length()) {
-                    val id = array.optString(i)
-                    if (id.isNotEmpty()) add(id)
+                    val obj = array.optJSONObject(i) ?: continue
+                    val id = obj.optString(idField)
+                    if (id.isEmpty() || !obj.has("t")) continue
+                    add(id to obj.getLong("t"))
                 }
             }
         } catch (_: Exception) {
@@ -336,18 +399,56 @@ class Prefs(context: Context) {
 
     companion object {
         const val DEFAULT_SERVER = "https://ntfy.sh"
-        private const val NAME = "grokbot-alarm"
+        private const val ENCRYPTED_NAME = "grokbot-alarm-enc"
+        private const val LEGACY_NAME = "grokbot-alarm"
         private const val KEY_SERVER = "server"
+        private const val KEY_SERVER_LOCKED = "server_locked"
         private const val KEY_SECRET = "secret"
         private const val KEY_LAST = "last_id"
         private const val KEY_PENDING = "pending"
         private const val KEY_OPEN = "open"
         private const val KEY_ANSWERED = "answered"
         private const val KEY_SEEN = "seen_msgs"
+        private const val KEY_NONCES = "nonces"
         private const val KEY_LAST_TIME = "last_msg_time"
         private const val KEY_AGENTS = "agents"
         private const val KEY_TASKS = "tasks"
         private const val KEY_MIGRATED = "migrated_agents"
+        private const val KEY_PLAINTEXT_MIGRATED = "plaintext_migrated"
+
+        private fun openStore(context: Context): SharedPreferences {
+            val masterKey = MasterKey.Builder(context)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
+            val encrypted = EncryptedSharedPreferences.create(
+                context,
+                ENCRYPTED_NAME,
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+            )
+            migratePlaintext(context, encrypted)
+            return encrypted
+        }
+
+        private fun migratePlaintext(context: Context, dest: SharedPreferences) {
+            val plain = context.getSharedPreferences(LEGACY_NAME, Context.MODE_PRIVATE)
+            if (plain.all.isEmpty()) return
+            if (!dest.getBoolean(KEY_PLAINTEXT_MIGRATED, false)) {
+                val edit = dest.edit()
+                for ((key, value) in plain.all) {
+                    when (value) {
+                        is String -> edit.putString(key, value)
+                        is Boolean -> edit.putBoolean(key, value)
+                        is Long -> edit.putLong(key, value)
+                        is Int -> edit.putInt(key, value)
+                        is Float -> edit.putFloat(key, value)
+                    }
+                }
+                edit.putBoolean(KEY_PLAINTEXT_MIGRATED, true).commit()
+            }
+            plain.edit().clear().commit()
+        }
     }
 }
 
@@ -357,19 +458,36 @@ fun validSecret(secret: String): Boolean {
 }
 
 fun validServer(server: String): Boolean {
-    if (!(server.startsWith("https://") || server.startsWith("http://"))) return false
-    return server.none { it.isWhitespace() } && server.substringAfter("://").isNotEmpty()
+    if (server.any { it.isWhitespace() }) return false
+    val https = server.startsWith("https://")
+    val http = server.startsWith("http://")
+    if (!https && !http) return false
+    val rest = server.substringAfter("://", "")
+    if (rest.isEmpty() || rest.startsWith("/") || rest.startsWith("@")) return false
+    val authority = rest.substringBefore("/").substringBefore("?")
+    if ('@' in authority) return false
+    if (http) {
+        val host = if (authority.startsWith("[")) {
+            authority.substringAfter("[").substringBefore("]").lowercase()
+        } else {
+            authority.substringBefore(":").lowercase()
+        }
+        if (host != "localhost" && host != "127.0.0.1" && host != "::1") return false
+    }
+    return authority.isNotEmpty()
 }
 
-fun inboxTopic(secret: String) = "gba$secret"
-
-fun replyTopic(secret: String) = "gbr$secret"
+fun serverHost(server: String): String {
+    val rest = server.substringAfter("://", server)
+    return rest.substringBefore("/").substringBefore("?")
+}
 
 fun setupLine(name: String, secret: String, server: String): String {
     val safe = name.replace("\"", "").replace("'", "").trim().ifBlank { "AI" }
     return "Set up grokbot-alarm for me (phone alarm that wakes me when you need me). " +
         "Don't use ntfy directly, and don't invent topics. " +
-        "Run: curl -fsSL https://raw.githubusercontent.com/WanManDu/grokbot-alarm/main/install.sh | sh -s -- " +
+        "Clone https://github.com/WanManDu/grokbot-alarm, check out the pinned commit in BOT.md, " +
+        "run sha256sum -c checksums.sha256, then sh install.sh " +
         "--secret $secret --server $server --agent \"$safe\". " +
         "Then read ~/.local/share/grokbot-alarm/SKILL.md and follow it whenever I ask to be woken or you need my decision. " +
         "If you can save a skill or a memory, save that file so you still have it next time."

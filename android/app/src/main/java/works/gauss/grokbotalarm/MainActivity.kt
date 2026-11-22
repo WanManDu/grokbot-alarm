@@ -282,6 +282,10 @@ private fun HomeScreen(now: Long, onAdd: () -> Unit, onOpen: (String) -> Unit, o
 @Composable
 private fun ConfirmPairScreen(target: PairTarget, onFinished: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val prefs = Prefs(context)
+    val current = prefs.server
+    val mismatch = prefs.serverLocked() && current.trimEnd('/') != target.server.trimEnd('/')
+    val shown = serverHost(if (mismatch) current else target.server)
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -298,18 +302,42 @@ private fun ConfirmPairScreen(target: PairTarget, onFinished: () -> Unit) {
             fontWeight = FontWeight.Black,
             fontSize = 40.sp,
         )
+        Text(
+            shown,
+            color = AlarmPalette.Accent,
+            fontFamily = AlarmFont,
+            fontWeight = FontWeight.Bold,
+            fontSize = 18.sp,
+        )
         WhiteButton(stringResource(R.string.connect), Modifier.fillMaxWidth()) {
-            val prefs = Prefs(context)
-            prefs.connectPaired(target.name, target.secret, target.server)
-            ListenState.reload(prefs)
-            if (Permissions.notificationsGranted(context)) {
-                ListenService.start(context)
-            } else if (context is MainActivity) {
-                context.askNotifications()
-            }
+            finishPair(context, target, allowServerChange = false)
             onFinished()
         }
+        if (mismatch) {
+            Text(
+                stringResource(R.string.use_host, serverHost(target.server)),
+                modifier = Modifier.clickable {
+                    finishPair(context, target, allowServerChange = true)
+                    onFinished()
+                },
+                color = AlarmPalette.Mute,
+                fontFamily = AlarmFont,
+                fontWeight = FontWeight.Bold,
+                fontSize = 16.sp,
+            )
+        }
         Spacer(Modifier.weight(1f))
+    }
+}
+
+private fun finishPair(context: android.content.Context, target: PairTarget, allowServerChange: Boolean) {
+    val prefs = Prefs(context)
+    prefs.connectPaired(target.name, target.secret, target.server, allowServerChange)
+    ListenState.reload(prefs)
+    if (Permissions.notificationsGranted(context)) {
+        ListenService.start(context)
+    } else if (context is MainActivity) {
+        context.askNotifications()
     }
 }
 
@@ -484,7 +512,8 @@ private fun AgentScreen(agentId: String, now: Long, onBack: () -> Unit) {
                         context.startActivity(
                             Intent(context, AlarmActivity::class.java)
                                 .putExtra(AlarmActivity.EXTRA, task.toPayload(agent.name).toJson())
-                                .putExtra(AlarmActivity.EXTRA_QUIET, !task.ringing),
+                                .putExtra(AlarmActivity.EXTRA_QUIET, !task.ringing)
+                                .putExtra(AlarmActivity.EXTRA_AGENT, agent.id),
                         )
                     }
                     .padding(vertical = 8.dp),

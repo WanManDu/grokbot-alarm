@@ -21,7 +21,8 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.GrokbotAlarm"
-        android:usesCleartextTraffic="true">
+        android:usesCleartextTraffic="false"
+        android:networkSecurityConfig="@xml/network_security_config">
 
         <activity
             android:name=".MainActivity"
@@ -32,14 +33,19 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Package-locked fallback. The pair page must target
+                 package=works.gauss.grokbotalarm. A naked grokbot-alarm:// link
+                 can be claimed by another app, so the page never uses one.
+                 Prefer the https App Link below. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="grokbot-alarm" android:host="pair" />
             </intent-filter>
-            <!-- Verified only when assetlinks.json is on the host root.
-                 Project Pages cannot serve that path; the pair page uses the scheme above. -->
+            <!-- Verified only when assetlinks.json is served at the host root
+                 (https://wanmandu.github.io/.well-known/assetlinks.json).
+                 A project Pages site cannot serve that path. See SECURITY.md. -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -68,7 +74,8 @@
 
         <receiver
             android:name=".BootReceiver"
-            android:exported="true">
+            android:exported="true"
+            android:permission="android.permission.RECEIVE_BOOT_COMPLETED">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>

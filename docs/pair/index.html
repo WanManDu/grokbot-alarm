@@ -3,6 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Referrer-Policy" content="no-referrer">
 <title>Connect</title>
 <style>
   :root { color-scheme: dark; }
@@ -18,13 +20,16 @@
 <main>
   <h1 id="title">Connect</h1>
   <p id="status"></p>
-  <a id="open" class="btn" href="#">Open app</a>
-  <a class="quiet" href="https://github.com/WanManDu/grokbot-alarm#app-install">Install</a>
+  <a id="open" class="btn" href="#" rel="noreferrer">Open app</a>
+  <a class="quiet" href="https://github.com/WanManDu/grokbot-alarm#app-install" rel="noreferrer">Install</a>
 </main>
 <script>
 (function () {
-  var raw = location.hash.charAt(0) === "#" ? location.hash.slice(1) : location.search.replace(/^\?/, "");
-  var params = new URLSearchParams(raw);
+  var fragment = location.hash.charAt(0) === "#" ? location.hash.slice(1) : "";
+  if (window.history && history.replaceState) {
+    history.replaceState(null, "", location.pathname);
+  }
+  var params = new URLSearchParams(fragment);
   var secret = params.get("s") || "";
   var server = (params.get("srv") || "").replace(/\/+$/, "");
   var name = ((params.get("n") || "AI").replace(/\s+/g, " ").trim() || "AI").slice(0, 40);
@@ -32,7 +37,8 @@
   var status = document.getElementById("status");
   var open = document.getElementById("open");
   var secretOk = /^[A-Za-z0-9_-]{16,40}$/.test(secret);
-  var serverOk = /^https?:\/\/\S+$/.test(server) && server.indexOf(" ") === -1;
+  var loopback = /^http:\/\/(127\.0\.0\.1|localhost|\[::1\])(?::[0-9]+)?$/.test(server);
+  var serverOk = (/^https:\/\/\S+$/.test(server) || loopback) && server.indexOf(" ") === -1 && server.indexOf("@") === -1;
   if (!secretOk || !serverOk) {
     status.textContent = "This link is missing the pairing data.";
     open.style.display = "none";
@@ -42,9 +48,11 @@
   var q = "s=" + encodeURIComponent(secret)
     + "&srv=" + encodeURIComponent(server)
     + "&n=" + encodeURIComponent(name);
+  // package= locks this to our app. A bare grokbot-alarm:// URL is not used;
+  // another app can register that scheme and take the secret.
   var intent = "intent://pair?" + q + "#Intent;scheme=grokbot-alarm;package=works.gauss.grokbotalarm;end";
   open.href = intent;
-  // The fragment never leaves the browser. Open the app with the custom scheme.
+  open.rel = "noreferrer";
   window.location.href = intent;
 })();
 </script>

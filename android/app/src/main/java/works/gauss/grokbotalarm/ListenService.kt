@@ -35,6 +35,7 @@ object ListenState {
 
 class ListenService : Service() {
     private val prefs by lazy { Prefs(this) }
+    private val rate = RateGate()
     private val main = Handler(Looper.getMainLooper())
     private val gate = Any()
     private val queue = ArrayDeque<AlarmPayload>()
@@ -84,7 +85,7 @@ class ListenService : Service() {
     }
 
     private fun ensureLoop() {
-        val stamp = prefs.server + "|" + prefs.agents().joinToString(",") { it.secret }
+        val stamp = prefs.server + "|" + prefs.agents().joinToString(",") { inboxTopic(it.secret) }
         if (loop?.isAlive == true && stamp == configStamp) return
         configStamp = stamp
         val gen = ++generation
@@ -133,13 +134,18 @@ class ListenService : Service() {
         val since = URLEncoder.encode(prefs.sinceQuery(), "UTF-8")
         val url = URL(server.trimEnd('/') + "/" + topics + "/json?since=" + since)
         val conn = url.openConnection() as HttpURLConnection
+        conn.instanceFollowRedirects = false
         conn.connectTimeout = 15_000
         conn.readTimeout = 120_000
         conn.setRequestProperty("Accept", "application/x-ndjson")
         conn.setRequestProperty("Accept-Encoding", "identity")
-        conn.setRequestProperty("User-Agent", "grokbot-alarm/0.2")
+        conn.setRequestProperty("User-Agent", "grokbot-alarm/0.5")
         connection = conn
         conn.connect()
+        if (conn.responseCode in 300..399) {
+            conn.disconnect()
+            error("redirect")
+        }
         main.post {
             if (gen == generation) ListenState.connected.value = true
         }
@@ -179,19 +185,42 @@ class ListenService : Service() {
 
     private fun dispatch(topic: String, body: String) {
         val agent = prefs.agentForInbox(topic) ?: return
+        val now = System.currentTimeMillis()
+        val opened = openEnvelope(agent.secret, body, now) ?: return
+        if (!prefs.acceptNonce(opened.nonce, opened.timestamp, now)) return
+        if (!rate.allow(agent.id, now)) {
+            Log.w(TAG, "rate ${agent.id}")
+            return
+        }
         prefs.touch(agent.id)
-        when (val incoming = parseIncoming(body)) {
-            is Incoming.Register -> prefs.noteWorking(agent.id, incoming.id, incoming.bot, incoming.task)
+        when (val incoming = parseIncomingObject(opened.payload)) {
+            is Incoming.Register -> {
+                if (rate.underOpenCap(openCount(agent.id, incoming.id))) {
+                    prefs.noteWorking(agent.id, incoming.id, incoming.bot, incoming.task)
+                }
+            }
             is Incoming.Needs -> onNeeds(agent, incoming)
-            is Incoming.Alarm -> onAlarm(agent, incoming.payload.copy(agent = agent.name))
+            is Incoming.Alarm -> onAlarm(agent, adoptReply(agent.secret, incoming.payload.copy(agent = agent.name)))
             null -> Unit
         }
         ListenState.reload(prefs)
     }
 
+    private fun openCount(agentId: String, except: String): Int =
+        prefs.tasks().count { it.agentId == agentId && it.state != STATE_DONE && it.id != except }
+
+    private fun ringingCount(agentId: String, except: String): Int =
+        prefs.tasks().count {
+            it.agentId == agentId && it.state == STATE_WAITING && it.ringing && it.id != except
+        }
+
     private fun onNeeds(agent: Agent, incoming: Incoming.Needs) {
         if (prefs.isAnswered(incoming.payload.id)) return
-        val payload = incoming.payload.copy(agent = agent.name)
+        val payload = adoptReply(agent.secret, incoming.payload.copy(agent = agent.name))
+        if (!rate.underOpenCap(openCount(agent.id, payload.id))) {
+            Log.w(TAG, "cap ${agent.id}")
+            return
+        }
         if (incoming.escalateAfterSec <= 0) {
             onAlarm(agent, payload)
             return
@@ -205,6 +234,14 @@ class ListenService : Service() {
 
     private fun onAlarm(agent: Agent, payload: AlarmPayload) {
         if (prefs.isAnswered(payload.id)) return
+        if (!rate.underRingingCap(ringingCount(agent.id, payload.id))) {
+            Log.w(TAG, "ring cap ${agent.id}")
+            return
+        }
+        if (!rate.underOpenCap(openCount(agent.id, payload.id))) {
+            Log.w(TAG, "cap ${agent.id}")
+            return
+        }
         cancelEscalation(payload.id)
         cancelNeeds(payload.id)
         if (!prefs.noteWaiting(agent.id, payload, escalateAt = 0, ringing = true)) return
@@ -230,8 +267,9 @@ class ListenService : Service() {
     private fun escalate(id: String) {
         val task = prefs.tasks().find { it.id == id } ?: return
         if (task.state != STATE_WAITING || task.ringing || prefs.isAnswered(id)) return
-        val name = prefs.agent(task.agentId)?.name.orEmpty()
-        val payload = task.toPayload(name)
+        val agent = prefs.agent(task.agentId) ?: return
+        if (!rate.underRingingCap(ringingCount(agent.id, id))) return
+        val payload = adoptReply(agent.secret, task.toPayload(agent.name))
         cancelNeeds(id)
         if (!prefs.noteWaiting(task.agentId, payload, escalateAt = 0, ringing = true)) return
         handleAlarm(payload)
@@ -243,7 +281,12 @@ class ListenService : Service() {
         val ringing = prefs.tasks().filter { it.state == STATE_WAITING && it.ringing && !prefs.isAnswered(it.id) }
         synchronized(gate) {
             ringing.forEach { task ->
-                val payload = task.toPayload(prefs.agent(task.agentId)?.name.orEmpty())
+                val agent = prefs.agent(task.agentId)
+                val payload = if (agent == null) {
+                    task.toPayload("")
+                } else {
+                    adoptReply(agent.secret, task.toPayload(agent.name))
+                }
                 if (active == null) {
                     active = payload
                     showActive()
@@ -300,6 +343,7 @@ class ListenService : Service() {
         val launch = Intent(this, AlarmActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
             putExtra(AlarmActivity.EXTRA, payload.toJson())
+            putExtra(AlarmActivity.EXTRA_AGENT, agentIdFor(payload))
         }
         try {
             startActivity(launch)
@@ -313,6 +357,7 @@ class ListenService : Service() {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
             putExtra(AlarmActivity.EXTRA, payload.toJson())
             putExtra(AlarmActivity.EXTRA_QUIET, true)
+            putExtra(AlarmActivity.EXTRA_AGENT, agentIdFor(payload))
         }
         val pi = PendingIntent.getActivity(
             this,
@@ -338,6 +383,9 @@ class ListenService : Service() {
 
     private fun needsId(id: String) = 4000 + abs(id.hashCode() % 20000)
 
+    private fun agentIdFor(payload: AlarmPayload): String =
+        prefs.tasks().find { it.id == payload.id }?.agentId.orEmpty()
+
     private fun listeningNotification(): Notification {
         val open = PendingIntent.getActivity(
             this,
@@ -360,6 +408,7 @@ class ListenService : Service() {
         val launch = Intent(this, AlarmActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
             putExtra(AlarmActivity.EXTRA, payload.toJson())
+            putExtra(AlarmActivity.EXTRA_AGENT, agentIdFor(payload))
         }
         val pi = PendingIntent.getActivity(
             this,

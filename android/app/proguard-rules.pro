@@ -1,0 +1,7 @@
+-keep class works.gauss.grokbotalarm.** { *; }
+-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod
+-dontwarn org.conscrypt.**
+-dontwarn org.bouncycastle.**
+-dontwarn com.google.errorprone.annotations.**
+-dontwarn javax.annotation.Nullable
+-dontwarn javax.annotation.concurrent.GuardedBy

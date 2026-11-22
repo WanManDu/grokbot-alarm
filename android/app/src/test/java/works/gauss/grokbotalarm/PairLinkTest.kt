@@ -47,5 +47,14 @@ class PairLinkTest {
         assertNull(parsePairLink("https://example.com/grokbot-alarm/pair#s=$secret&srv=https%3A%2F%2Fntfy.sh&n=A"))
         assertNull(parsePairLink("https://wanmandu.github.io/grokbot-alarm/pair#s=short&srv=https%3A%2F%2Fntfy.sh&n=A"))
         assertNull(parsePairLink("https://wanmandu.github.io/other#s=$secret&srv=https%3A%2F%2Fntfy.sh"))
+        assertNull(
+            parsePairLink(
+                "https://wanmandu.github.io/grokbot-alarm/pair?s=$secret&srv=https%3A%2F%2Fntfy.sh&n=A",
+            ),
+        )
+        assertNull(parsePairLink("grokbot-alarm://pair?s=$secret&srv=http%3A%2F%2F10.0.0.8&n=A"))
+        assertEquals(false, validServer("http://ntfy.sh"))
+        assertEquals(true, validServer("https://ntfy.sh"))
+        assertEquals(true, validServer("http://127.0.0.1:8080"))
     }
 }
